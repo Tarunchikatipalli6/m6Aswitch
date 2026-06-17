@@ -1,0 +1,31 @@
+Package: m6Aswitch
+Title: Integrating Isoform Switching with m6A Methylation Analysis
+Version: 0.1.0
+Authors@R: 
+    person("Tarun", "Chikatipalli", , "tarunchikatipalli6@gmail.com", role = c("aut", "cre"))
+Description: m6Aswitch integrates isoform-level switching analysis with m6A 
+    methylation site-level quantification to identify functional rewiring of 
+    m6A regulation across isoform switches. It bridges m6AnetAnalyzer output 
+    and IsoformSwitchAnalyzeR results to detect which m6A sites are gained or 
+    lost during isoform switches, with annotation for DRACH motifs, UTR regions, 
+    and differential expression.
+License: MIT + file LICENSE
+Encoding: UTF-8
+Roxygen2: list(markdown = TRUE)
+RoxygenNote: 7.2.3
+Imports:
+    data.table,
+    dplyr,
+    tidyr,
+    GenomicRanges,
+    IRanges,
+    igraph,
+    ggplot2,
+    stringr,
+    readr,
+    Biostrings
+Suggests:
+    testthat (>= 3.0.0),
+    knitr,
+    rmarkdown
+VignetteBuilder: knitr

@@ -83,7 +83,12 @@ annotate_drach <- function(m6a_switches, sequences) {
   }
 
   # Reset motif columns each run (prevents old type contamination)
-  m6a_switches[, c("drach_motif_a", "drach_motif_b", "drach_motif") := NULL]
+  # Only delete columns that actually exist to avoid data.table warnings
+  cols_to_delete <- intersect(c("drach_motif_a", "drach_motif_b", "drach_motif"), names(m6a_switches))
+  if (length(cols_to_delete) > 0) {
+    m6a_switches[, (cols_to_delete) := NULL]
+  }
+  
   m6a_switches[, drach_motif_a := as.logical(NA)]
   m6a_switches[, drach_motif_b := as.logical(NA)]
 

@@ -1,0 +1,142 @@
+---
+title: "Getting Started with m6Aswitch"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Getting Started with m6Aswitch}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>"
+)
+```
+
+# Getting Started with m6Aswitch
+
+## Overview
+
+m6Aswitch integrates isoform-level switching analysis with m6A methylation site-level quantification. This vignette walks through a typical analysis workflow.
+
+## Installation
+
+```r
+# Install from GitHub
+remotes::install_github("Tarunchikatipalli6/m6Aswitch")
+```
+
+## Load the Package
+
+```{r setup}
+library(m6Aswitch)
+library(data.table)
+```
+
+## Step 1: Prepare Your Data
+
+You need three inputs:
+
+1. **m6A predictions** from m6AnetAnalyzer
+2. **Isoform switches** from IsoformSwitchAnalyzeR
+3. **Transcript sequences** for DRACH annotation
+
+Create example data:
+
+```{r example_data}
+# Example m6A sites
+m6a_example <- data.table(
+  transcript_id = c("ENST001", "ENST001", "ENST002", "ENST002"),
+  position = c(100, 250, 100, 150),
+  probability = c(0.95, 0.72, 0.88, 0.65)
+)
+
+# Example isoform switches
+switches_example <- data.table(
+  gene_id = c("GENE1", "GENE2"),
+  isoform_a = c("ENST001", "ENST003"),
+  isoform_b = c("ENST002", "ENST004"),
+  fdr = c(0.01, 0.03)
+)
+
+# Example sequences
+sequences_example <- data.table(
+  isoform_id = c("ENST001", "ENST002", "ENST003", "ENST004"),
+  sequence = c(
+    "ACUGAACUGACUGACUGACUGACUGA",
+    "ACUGAACUGACUGACUGACUGACUGA",
+    "GAACUGACUGACUGACUGACUGACUG",
+    "GAACUGACUGACUGACUGACUGACUG"
+  )
+)
+```
+
+## Step 2: Parse and Integrate
+
+```{r integrate}
+# In practice, you'd load from files:
+# m6a_sites <- parse_m6anet("m6anet_output.csv")
+# iso_switches <- parse_isoform_switch("isoform_switches.txt")
+
+# For this example, use the prepared data:
+m6a_sites <- m6a_example
+iso_switches <- switches_example
+
+# Run the core integration
+m6a_switches <- annotate_m6a_switches(m6a_sites, iso_switches, sequences_example)
+
+head(m6a_switches)
+```
+
+## Step 3: Add DRACH Motif Annotation
+
+```{r drach}
+m6a_switches <- annotate_drach(m6a_switches, sequences_example)
+
+# View results
+m6a_switches[, .(gene_id, position, m6a_fate, drach_motif_a)]
+```
+
+## Step 4: Visualize
+
+```{r plot}
+# Summary plot of m6A fates
+plot_m6a_switches(m6a_switches, plot_type = "summary")
+```
+
+## Step 5: Export Results
+
+```{r export}
+# Export to CSV and BED
+results_files <- export_annotated_switches(m6a_switches, 
+                                          output_prefix = "my_m6a_analysis",
+                                          format = "csv")
+
+# Generate report
+report <- generate_summary_report(m6a_switches)
+```
+
+## Interpreting Results
+
+The `m6a_fate` column describes what happens to each m6A site:
+
+- **LOST**: Present in isoform A (normal/reference), absent in isoform B (switch). 
+  - Functional impact: Loss of regulatory control
+  
+- **GAINED**: Absent in isoform A, present in isoform B (switch).
+  - Functional impact: Acquisition of new regulation
+  
+- **RETAINED**: Present in both isoforms.
+  - Functional impact: Consistent regulation across switch
+
+## Next Steps
+
+- Overlap m6A-altered genes with DESeq2 differential expression results
+- Perform GO enrichment on genes with lost m6A sites
+- Visualize in IGV using exported BED tracks
+- Validate top hits with orthogonal methods (RIP-seq, SLAM-seq)
+
+## Questions?
+
+See the package documentation and GitHub repository for more details.

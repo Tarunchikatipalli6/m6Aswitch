@@ -1,2 +1,2 @@
 # m6Aswitch
-ntegrating isoform switching with m6A methylation analysis
+Integrating isoform switching with m6A methylation analysis

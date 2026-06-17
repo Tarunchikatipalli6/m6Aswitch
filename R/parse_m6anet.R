@@ -18,7 +18,6 @@
 #' }
 #'
 #' @import data.table
-#' @import dplyr
 #'
 #' @export
 parse_m6anet <- function(m6anet_file, 
@@ -74,7 +73,6 @@ parse_m6anet <- function(m6anet_file,
 #' }
 #'
 #' @import data.table
-#' @import dplyr
 #'
 #' @export
 parse_isoform_switch <- function(iso_switch_file,

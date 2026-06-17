@@ -19,7 +19,6 @@
 #' }
 #'
 #' @import data.table
-#' @import dplyr
 #'
 #' @export
 parse_isoform_switch <- function(iso_switch_file,

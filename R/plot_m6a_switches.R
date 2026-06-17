@@ -242,7 +242,7 @@ plot_isoform_details <- function(gene_id, m6a_switches, iso_lengths = NULL) {
 
   p <- ggplot2::ggplot(
     long_dt,
-    ggplot2::aes_string(x = x_var, y = "factor(isoform)", color = "m6a_fate", shape = "side")
+    ggplot2::aes(x = .data[[x_var]], y = factor(isoform), color = m6a_fate, shape = side)
   ) +
     ggplot2::geom_point(size = 3, alpha = 0.9) +
     ggplot2::scale_color_manual(values = fate_colors, drop = FALSE) +

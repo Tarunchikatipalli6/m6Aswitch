@@ -28,7 +28,7 @@ plot_m6a_switches <- function(m6a_switches, plot_type = "summary") {
     # Summary: barplot of m6A fates (LOST, GAINED, RETAINED)
     fate_counts <- m6a_switches[, .N, by = m6a_fate]
     
-    p <- ggplot2::ggplot(fate_counts, aes(x = m6a_fate, y = N, fill = m6a_fate)) +
+    p <- ggplot2::ggplot(fate_counts, ggplot2::aes(x = m6a_fate, y = N, fill = m6a_fate)) +
       geom_col(position = "dodge") +
       scale_fill_manual(values = c(LOST = "#E74C3C", GAINED = "#27AE60", RETAINED = "#3498DB")) +
       labs(

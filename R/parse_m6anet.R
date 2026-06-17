@@ -52,6 +52,7 @@ parse_m6anet <- function(m6anet_file,
   
   return(m6a_data)
 }
+
 #' Parse IsoformSwitchAnalyzeR Output
 #'
 #' Reads isoform switch results from IsoformSwitchAnalyzeR and returns a data.table

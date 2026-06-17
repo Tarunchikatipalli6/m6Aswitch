@@ -98,7 +98,7 @@ generate_summary_report <- function(m6a_switches, output_file = "m6aswitch_repor
     "",
     "## Summary Statistics ##",
     sprintf("Total isoform switches analyzed: %d", 
-            uniqueN(m6a_switches[, .(gene_id, isoform_a, isoform_b)])),
+            data.table::uniqueN(m6a_switches[, .(gene_id, isoform_a, isoform_b)])),
     sprintf("Total m6A sites detected: %d", nrow(m6a_switches)),
     sprintf("  - LOST: %d (%.1f%%)", 
             nrow(m6a_switches[m6a_fate == "LOST"]),

@@ -62,7 +62,7 @@ find_motif <- function(sequence, position, context_bp = 2) {
 #' @import data.table
 #'
 #' @export
-annotate_drach <- function(m6a_switches, iso_sequences) {
+annotate_drach <- function(m6a_switches, sequences) {
 
   if (!data.table::is.data.table(m6a_switches)) {
     stop("m6a_switches must be a data.table")

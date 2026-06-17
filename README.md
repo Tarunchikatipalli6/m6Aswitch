@@ -235,6 +235,57 @@ ENST00000002,ACGAAGATCGGAACACCGGGAACAAACGAAC...
 
 ---
 
+## Coordinate System and Genomic Lifting
+
+### The Problem
+
+m6AnetAnalyzer reports m6A sites in **transcript-level coordinates**. This means
+position 245 in `ENST00000001` and position 245 in `ENST00000002` refer to
+completely different genomic loci. Comparing raw transcript positions across
+isoforms produces spurious LOST/GAINED/RETAINED calls.
+
+### The Solution: GTF-Aware Coordinate Lifting
+
+Use `lift_m6a_to_genomic()` to convert transcript coordinates to genomic
+coordinates before annotating switches. Then use
+`annotate_m6a_switches_genomic()` to compare sites at the **same genomic
+location** across isoforms.
+
+```r
+library(m6Aswitch)
+library(data.table)
+
+# 1. Parse inputs (as usual)
+m6a_sites     <- parse_m6anet("m6anet_predictions.csv")
+iso_switches  <- parse_isoform_switch("isoform_switches.txt")
+iso_sequences <- fread("isoform_sequences.csv")
+
+# 2. Lift transcript coordinates -> genomic coordinates (requires GTF)
+genomic_sites <- lift_m6a_to_genomic(m6a_sites, gtf_file = "genome.gtf")
+# Returns a GRanges object; genomic_sites$transcript_id and
+# genomic_sites$probability carry over from m6a_sites
+
+# 3. Annotate switches using genomic coordinates
+m6a_annotated <- annotate_m6a_switches_genomic(
+  genomic_sites, iso_switches, iso_sequences
+)
+
+# 4. Optional: add DRACH motif annotation (uses transcript sequences)
+m6a_annotated_drach <- annotate_drach(m6a_annotated, iso_sequences)
+
+# 5. Visualize
+plot_m6a_switches(m6a_annotated, plot_type = "summary")
+```
+
+### Before / After Comparison
+
+| Approach | Comparison basis | Scientific validity |
+|----------|-----------------|---------------------|
+| `annotate_m6a_switches()` | Transcript position number | ❌ Position 245 means different things per isoform |
+| `annotate_m6a_switches_genomic()` | Genomic coordinates (chr:start-end) | ✅ Same locus compared across isoforms |
+
+---
+
 ## Example Workflow Output
 
 ```
@@ -267,11 +318,13 @@ across isoform switches. GitHub: Tarunchikatipalli6/m6Aswitch
 ## Dependencies
 
 - `data.table` - Fast data manipulation
-- `dplyr` - Data wrangling
 - `tidyr` - Data reshaping
 - `Biostrings` - Biological string handling
 - `GenomicRanges` - Genomic data structures
+- `GenomicFeatures` - GTF/TxDb handling and coordinate mapping
 - `IRanges` - Range objects
+- `S4Vectors` - S4 vector infrastructure
+- `methods` - R methods infrastructure
 - `igraph` - Network analysis
 - `ggplot2` - Visualization
 - `stringr` - String operations
@@ -284,8 +337,10 @@ across isoform switches. GitHub: Tarunchikatipalli6/m6Aswitch
 ✅ Parse m6A predictions from m6AnetAnalyzer  
 ✅ Process isoform switches from IsoformSwitchAnalyzeR  
 ✅ Detect m6A changes (LOST/GAINED/RETAINED)  
+✅ GTF-aware coordinate lifting (transcript → genomic)  
+✅ Scientifically valid cross-isoform comparison via genomic coordinates  
 ✅ DRACH motif annotation  
-✅ Comprehensive unit tests (33 tests, all passing)  
+✅ Comprehensive unit tests  
 ✅ Sample data and demo workflow  
 ✅ Easy-to-use API  
 

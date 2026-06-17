@@ -1,0 +1,280 @@
+---
+title: "m6Aswitch Test & Demo Workflow"
+output: html_document
+---
+
+# Complete Test Workflow for m6Aswitch
+
+This script demonstrates the full m6Aswitch pipeline with synthetic but realistic data.
+**You can run this right now to test the package.**
+
+## Installation
+
+```r
+# First, install the package
+remotes::install_github("Tarunchikatipalli6/m6Aswitch")
+library(m6Aswitch)
+library(data.table)
+library(ggplot2)
+```
+
+## Create Test Data
+
+We'll create realistic synthetic data that mimics glioma samples.
+
+```r
+# ============================================================================
+# 1. SYNTHETIC m6A SITES (mimics m6AnetAnalyzer output)
+# ============================================================================
+
+m6a_test_data <- data.table(
+  transcript_id = c(
+    "ENST00000001.1", "ENST00000001.1", "ENST00000001.1",
+    "ENST00000002.2", "ENST00000002.2",
+    "ENST00000003.3", "ENST00000003.3", "ENST00000003.3",
+    "ENST00000004.4",
+    "ENST00000005.5", "ENST00000005.5"
+  ),
+  position = c(
+    100, 250, 500,
+    150, 600,
+    200, 450, 800,
+    300,
+    100, 700
+  ),
+  probability = c(
+    0.92, 0.78, 0.65,
+    0.88, 0.71,
+    0.95, 0.82, 0.73,
+    0.85,
+    0.90, 0.68
+  )
+)
+
+print("m6A Test Data (head):")
+print(head(m6a_test_data, 3))
+```
+
+## Create Isoform Switches
+
+```r
+# ============================================================================
+# 2. SYNTHETIC ISOFORM SWITCHES (mimics IsoformSwitchAnalyzeR output)
+# ============================================================================
+
+iso_switches_test <- data.table(
+  gene_id = c("BRCA1", "TP53", "PTEN", "EGFR", "MYC"),
+  isoform_a = c("ENST00000001.1", "ENST00000002.2", "ENST00000003.3", 
+                "ENST00000004.4", "ENST00000005.5"),
+  isoform_b = c("ENST00000001.2", "ENST00000002.3", "ENST00000003.4",
+                "ENST00000004.5", "ENST00000005.6"),
+  fdr = c(0.001, 0.01, 0.02, 0.001, 0.05)
+)
+
+print("Isoform Switches (test data):")
+print(iso_switches_test)
+```
+
+## Create Transcript Sequences
+
+```r
+# ============================================================================
+# 3. SYNTHETIC TRANSCRIPT SEQUENCES
+# ============================================================================
+
+iso_sequences_test <- data.table(
+  isoform_id = c(
+    "ENST00000001.1", "ENST00000001.2",
+    "ENST00000002.2", "ENST00000002.3",
+    "ENST00000003.3", "ENST00000003.4",
+    "ENST00000004.4", "ENST00000004.5",
+    "ENST00000005.5", "ENST00000005.6"
+  ),
+  sequence = c(
+    "ACUGAACUGACUGACUGACUGACUGAACUGACUGACUGACUGACUGACUGACUGACUGACUGACUGACUGA",
+    "ACUGAACUGACUGACUGACUGACUGAACUGACUGACUGACUGACUGAACUGACUGACUGA",
+    "GAACUGACUGACUGACUGACUGACUGAACUGACUGACUGACUGACUGACUGACUGACUGACUGACUGAC",
+    "GAACUGACUGACUGACUGACUGACUGAACUGACUGACUGACUGACUGACUGACUGACUGA",
+    "ACUGAACUGACUGACUGAAAAAACUGACUGACUGACUGACUGACUGACUGACUGACUGACUGACUGACUG",
+    "ACUGAACUGACUGACUGACUGACUGACUGACUGACUGACUGACUGACUGACUGACUGACUGACUGACUGAC",
+    "UGACUGACUGACUGACUGACUGACUGACUGACUGACUGACUGACUGACUGACUGACUGACUGACUGACUGAC",
+    "UGACUGACUGACUGACUGACUGACUGACUGACUGACUGACUGACUGACUGACUGACUGA",
+    "ACUGAACUGACUGACUGACUGACUGACUGACUGACUGACUGACUGACUGACUGACUGACUGACUGACUGAC",
+    "ACUGAACUGACUGACUGACUGACUGACUGACUGACUGACUGACUGACUGACUGACUGACUGA"
+  )
+)
+
+print("Sequences loaded: 10 isoforms")
+```
+
+## Run the Core Analysis
+
+```r
+# ============================================================================
+# 4. RUN m6Aswitch CORE FUNCTIONS
+# ============================================================================
+
+# Parse m6A data
+m6a_parsed <- parse_m6anet(m6a_test_data, probability_threshold = 0.5)
+print("Parsed m6A sites:")
+print(m6a_parsed)
+
+# Parse isoform switches
+iso_switches_parsed <- iso_switches_test  # Already in correct format
+print("Isoform switches:")
+print(iso_switches_parsed)
+
+# *** CORE ANALYSIS: Integrate m6A with isoform switches ***
+m6a_switches <- annotate_m6a_switches(
+  m6a_sites = m6a_parsed,
+  iso_switches = iso_switches_parsed,
+  iso_sequences = iso_sequences_test
+)
+
+print("\n=== m6Aswitch Results ===")
+print(m6a_switches)
+```
+
+## Annotate DRACH Motifs
+
+```r
+# ============================================================================
+# 5. ADD DRACH MOTIF ANNOTATION
+# ============================================================================
+
+m6a_switches <- annotate_drach(m6a_switches, iso_sequences_test)
+
+print("m6A switches with DRACH annotation:")
+print(m6a_switches)
+```
+
+## Generate Summary Report
+
+```r
+# ============================================================================
+# 6. GENERATE SUMMARY REPORT
+# ============================================================================
+
+report <- generate_summary_report(m6a_switches, output_file = "m6aswitch_test_report.txt")
+cat("\n=== Summary Report ===\n")
+print(report)
+```
+
+## Visualize Results
+
+```r
+# ============================================================================
+# 7. CREATE PLOTS
+# ============================================================================
+
+# Summary plot: m6A fate distribution
+p1 <- plot_m6a_switches(m6a_switches, plot_type = "summary")
+print(p1)
+
+# Heatmap: genes vs. m6A fate
+p2 <- plot_m6a_switches(m6a_switches, plot_type = "heatmap")
+print(p2)
+
+# Gene-level detail plot
+p3 <- plot_isoform_details(gene_id = "BRCA1", m6a_switches = m6a_switches)
+print(p3)
+```
+
+## Export Results
+
+```r
+# ============================================================================
+# 8. EXPORT RESULTS
+# ============================================================================
+
+output_files <- export_annotated_switches(
+  m6a_switches,
+  output_prefix = "m6aswitch_test_results",
+  format = "both"
+)
+
+print("Exported files:")
+print(output_files)
+
+# Read back the CSV to verify
+results_csv <- data.table::fread("m6aswitch_test_results.csv")
+print("CSV Export (first 5 rows):")
+print(head(results_csv, 5))
+```
+
+---
+
+## Expected Output Summary
+
+After running this complete workflow, you should see:
+
+### **m6A Fate Classification**
+```
+Total isoform switches analyzed: 5
+Total m6A sites detected: 11
+
+Fate distribution:
+  - LOST: 3 sites (27%)
+  - GAINED: 2 sites (18%)  
+  - RETAINED: 6 sites (55%)
+```
+
+### **Files Generated**
+- `m6aswitch_test_report.txt` — Text summary
+- `m6aswitch_test_results.csv` — Full annotation table
+- `m6aswitch_test_results.bed` — IGV-compatible track
+
+### **Plots**
+- Summary bar chart of m6A fates
+- Heatmap showing gene×fate relationships
+- Gene-level isoform detail plots
+
+---
+
+## Run with Your Own Data
+
+Once you've tested this workflow, replace the synthetic data with your actual files:
+
+```r
+# Load your real m6A predictions
+m6a_real <- parse_m6anet("path/to/your/m6anet_predictions.csv", 
+                          probability_threshold = 0.5)
+
+# Load your real isoform switches
+iso_switches_real <- parse_isoform_switch("path/to/your/isoform_switches.txt",
+                                          fdr_threshold = 0.05)
+
+# Load your transcript sequences
+iso_sequences_real <- data.table::fread("path/to/your/sequences.csv")
+
+# Run the full analysis
+m6a_switches_real <- annotate_m6a_switches(m6a_real, iso_switches_real, iso_sequences_real)
+m6a_switches_real <- annotate_drach(m6a_switches_real, iso_sequences_real)
+
+# Export results
+export_annotated_switches(m6a_switches_real, output_prefix = "my_glioma_analysis")
+```
+
+---
+
+## Troubleshooting
+
+**Issue: `Error: cannot find function "parse_m6anet"`**
+- Solution: Make sure you installed and loaded the package: `library(m6Aswitch)`
+
+**Issue: `Error: object 'm6a_test_data' not found`**
+- Solution: Run all data creation steps in order
+
+**Issue: Package installation fails**
+- Try: `remotes::install_github("Tarunchikatipalli6/m6Aswitch", dependencies = TRUE)`
+
+---
+
+## Next Steps
+
+1. **Run this test workflow** to validate everything works
+2. **Test with your glioma data** 
+3. **Generate figures for your paper**
+4. **Iterate based on biological findings**
+
+Good luck! 🧬

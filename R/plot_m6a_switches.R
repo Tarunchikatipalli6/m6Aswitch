@@ -29,16 +29,16 @@ plot_m6a_switches <- function(m6a_switches, plot_type = "summary") {
     fate_counts <- m6a_switches[, .N, by = m6a_fate]
     
     p <- ggplot2::ggplot(fate_counts, ggplot2::aes(x = m6a_fate, y = N, fill = m6a_fate)) +
-      geom_col(position = "dodge") +
-      scale_fill_manual(values = c(LOST = "#E74C3C", GAINED = "#27AE60", RETAINED = "#3498DB")) +
-      labs(
+      ggplot2::geom_col(position = "dodge") +
+      ggplot2::scale_fill_manual(values = c(LOST = "#E74C3C", GAINED = "#27AE60", RETAINED = "#3498DB")) +
+      ggplot2::labs(
         title = "m6A Sites Across Isoform Switches",
         x = "m6A Fate",
         y = "Count",
         fill = "Fate"
       ) +
-      theme_minimal() +
-      theme(axis.text.x = element_text(angle = 45, hjust = 1))
+      ggplot2::theme_minimal() +
+      ggplot2::theme(axis.text.x = ggplot2::element_text(angle = 45, hjust = 1))
     
     return(p)
     
@@ -46,16 +46,16 @@ plot_m6a_switches <- function(m6a_switches, plot_type = "summary") {
     # Heatmap: genes x fate
     gene_fate <- m6a_switches[, .N, by = .(gene_id, m6a_fate)]
     
-    p <- ggplot2::ggplot(gene_fate, aes(x = m6a_fate, y = gene_id, fill = N)) +
-      geom_tile() +
-      scale_fill_viridis_c() +
-      labs(
+    p <- ggplot2::ggplot(gene_fate, ggplot2::aes(x = m6a_fate, y = gene_id, fill = N)) +
+      ggplot2::geom_tile() +
+      ggplot2::scale_fill_viridis_c() +
+      ggplot2::labs(
         title = "m6A Fate by Gene",
         x = "m6A Fate",
         y = "Gene",
         fill = "Count"
       ) +
-      theme_minimal()
+      ggplot2::theme_minimal()
     
     return(p)
     
@@ -89,17 +89,17 @@ plot_isoform_details <- function(gene_id, m6a_switches, iso_lengths = NULL) {
   }
   
   # Create isoform-level plot
-  p <- ggplot2::ggplot(gene_data, aes(x = position, y = factor(isoform_a), color = m6a_fate)) +
-    geom_point(size = 3) +
-    scale_color_manual(values = c(LOST = "#E74C3C", GAINED = "#27AE60", RETAINED = "#3498DB")) +
-    labs(
+  p <- ggplot2::ggplot(gene_data, ggplot2::aes(x = position, y = factor(isoform_a), color = m6a_fate)) +
+    ggplot2::geom_point(size = 3) +
+    ggplot2::scale_color_manual(values = c(LOST = "#E74C3C", GAINED = "#27AE60", RETAINED = "#3498DB")) +
+    ggplot2::labs(
       title = sprintf("m6A Sites in %s Isoform Switch", gene_id),
       x = "Position",
       y = "Isoform",
       color = "Fate"
     ) +
-    theme_minimal() +
-    theme(legend.position = "right")
+    ggplot2::theme_minimal() +
+    ggplot2::theme(legend.position = "right")
   
   return(p)
 }

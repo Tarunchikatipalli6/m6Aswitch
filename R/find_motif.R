@@ -1,62 +1,50 @@
 #' Find DRACH Motif at m6A Site
 #'
-#' Checks if an m6A site location matches a DRACH motif pattern 
-#' (D=A/G/U, R=A/G) in the surrounding sequence context.
+#' Checks whether the base at `position` is the central A of a DRACH motif.
+#' DRACH = D-R-A-C-H where:
+#'   D = A/G/U, R = A/G, A = A, C = C, H = A/C/U
 #'
 #' @param sequence Character string of RNA sequence
 #' @param position Numeric position within sequence (1-indexed)
-#' @param context_bp Bases before/after position to check (default: 2)
+#' @param context_bp Bases before/after position to check (kept for API compatibility;
+#'   DRACH check uses a strict 5-mer centered on `position`)
 #'
-#' @return logical TRUE if DRACH motif present, FALSE otherwise
+#' @return logical TRUE if DRACH motif centered at `position`, FALSE otherwise
 #'
 #' @examples
 #' \dontrun{
-#' find_motif("ACUGGACC", 4)  # Check if position 4 (A) is in DRACH
+#' find_motif("AGACA", 3)  # TRUE
 #' }
 #'
 #' @import Biostrings
 #'
 #' @export
 find_motif <- function(sequence, position, context_bp = 2) {
-  
+
   # Validate inputs
   if (!is.character(sequence) || length(sequence) != 1) {
     stop("sequence must be a single character string")
   }
-  if (!is.numeric(position) || position < 1 || position > nchar(sequence)) {
+  if (!is.numeric(position) || length(position) != 1 || is.na(position)) {
+    stop("position must be a single non-NA numeric value")
+  }
+
+  position <- as.integer(position)
+  if (position < 1 || position > nchar(sequence)) {
     stop("position must be numeric and within sequence bounds")
   }
-  
-  # Convert to uppercase
-  sequence <- toupper(sequence)
-  
-  # Extract context window
-  start <- max(1, position - context_bp)
-  end <- min(nchar(sequence), position + context_bp)
-  window <- substr(sequence, start, end)
-  
-  # Check for DRACH motif pattern
-  # D = A/G/U (any purine or U)
-  # R = A/G (purine)
-  # A = adenosine (target for m6A)
-  # C = cytosine
-  # H = A/C/U (any except G)
-  
-  # DRACH pattern: [AGU][AG][AU]C[AUC]
-  # More flexible: look for D-R-A-C-H where:
-  # - D is at any position in window
-  # - R follows D
-  # - A follows R
-  # - C follows A
-  # - H follows C
-  
-  drach_pattern <- "[AGU][AG][AU]C[AUC]"
-  
-  if (grepl(drach_pattern, window, ignore.case = TRUE)) {
-    return(TRUE)
-  } else {
+
+  # Convert DNA->RNA and uppercase
+  sequence <- toupper(chartr("T", "U", sequence))
+
+  # Need full 5-mer around center
+  if (position - 2 < 1 || position + 2 > nchar(sequence)) {
     return(FALSE)
   }
+
+  motif <- substr(sequence, position - 2, position + 2)
+  # DRACH centered at A: [AGU][AG]AC[ACU]
+  return(grepl("^[AGU][AG]AC[ACU]$", motif))
 }
 
 #' Annotate m6A Sites with DRACH Motif Status
@@ -66,68 +54,78 @@ find_motif <- function(sequence, position, context_bp = 2) {
 #' @param m6a_switches data.table from annotate_m6a_switches()
 #' @param sequences data.table with columns: isoform_id, sequence
 #'
-#' @return m6a_switches with added column: drach_motif (logical)
+#' @return m6a_switches with added columns:
+#'   - drach_motif_a (logical)
+#'   - drach_motif_b (logical)
+#'   - drach_motif (logical summary)
 #'
 #' @import data.table
 #'
 #' @export
 annotate_drach <- function(m6a_switches, sequences) {
-  
+
   if (!is.data.table(m6a_switches)) {
     stop("m6a_switches must be a data.table")
   }
-  
+  if (!is.data.table(sequences)) {
+    stop("sequences must be a data.table")
+  }
+  if (!all(c("isoform_id", "sequence") %in% names(sequences))) {
+    stop("sequences must contain columns: isoform_id, sequence")
+  }
+
   # Handle empty input
   if (nrow(m6a_switches) == 0) {
+    m6a_switches[, drach_motif_a := logical(0)]
+    m6a_switches[, drach_motif_b := logical(0)]
     m6a_switches[, drach_motif := logical(0)]
     return(m6a_switches)
   }
-  
-  # Merge sequences
-  seq_map <- sequences[, .(isoform_id, sequence)]
-  
-  m6a_switches[, drach_motif := NA]
-  m6a_switches[, drach_motif_a := NA_character_]
-  m6a_switches[, drach_motif_b := NA_character_]
-  
-  for (i in 1:nrow(m6a_switches)) {
+
+  # Merge sequences (unique isoform map)
+  seq_map <- unique(sequences[, .(isoform_id, sequence)], by = "isoform_id")
+
+  m6a_switches[, drach_motif_a := as.logical(NA)]
+  m6a_switches[, drach_motif_b := as.logical(NA)]
+
+  for (i in seq_len(nrow(m6a_switches))) {
     iso_a <- m6a_switches[i, isoform_a]
     iso_b <- m6a_switches[i, isoform_b]
     position <- m6a_switches[i, position]
-    m6a_in_a <- m6a_switches[i, m6a_in_isoform_a]
-    m6a_in_b <- m6a_switches[i, m6a_in_isoform_b]
-    
-    # Skip if position is NA or not numeric
-    if (is.na(position) || !is.numeric(position)) {
-      next
-    }
-    
+    m6a_in_a <- isTRUE(m6a_switches[i, m6a_in_isoform_a])
+    m6a_in_b <- isTRUE(m6a_switches[i, m6a_in_isoform_b])
+
+    if (is.na(position)) next
+
     # Check DRACH in isoform A (if m6A present)
-    if (!is.na(m6a_in_a) && m6a_in_a) {
-      seq_a_vec <- seq_map[isoform_id == iso_a, sequence]
-      if (length(seq_a_vec) > 0) {
-        seq_a <- seq_a_vec[1]  # Extract first element
-        tryCatch({
-          m6a_switches[i, drach_motif_a := find_motif(seq_a, position)]
-        }, error = function(e) {
-          NULL
-        })
+    if (m6a_in_a) {
+      seq_a <- seq_map[isoform_id == iso_a, sequence]
+      if (length(seq_a) > 0 && !is.na(seq_a[1])) {
+        m6a_switches[i, drach_motif_a := tryCatch(
+          find_motif(seq_a[1], position),
+          error = function(e) as.logical(NA)
+        )]
       }
     }
-    
+
     # Check DRACH in isoform B (if m6A present)
-    if (!is.na(m6a_in_b) && m6a_in_b) {
-      seq_b_vec <- seq_map[isoform_id == iso_b, sequence]
-      if (length(seq_b_vec) > 0) {
-        seq_b <- seq_b_vec[1]  # Extract first element
-        tryCatch({
-          m6a_switches[i, drach_motif_b := find_motif(seq_b, position)]
-        }, error = function(e) {
-          NULL
-        })
+    if (m6a_in_b) {
+      seq_b <- seq_map[isoform_id == iso_b, sequence]
+      if (length(seq_b) > 0 && !is.na(seq_b[1])) {
+        m6a_switches[i, drach_motif_b := tryCatch(
+          find_motif(seq_b[1], position),
+          error = function(e) as.logical(NA)
+        )]
       }
     }
   }
-  
+
+  # Summary field across A/B for each row
+  m6a_switches[, drach_motif := fifelse(
+    isTRUE(drach_motif_a) | isTRUE(drach_motif_b), TRUE,
+    fifelse(!is.na(drach_motif_a) & !is.na(drach_motif_b) &
+              !drach_motif_a & !drach_motif_b, FALSE, as.logical(NA))
+  ), by = seq_len(nrow(m6a_switches))]
+
   return(m6a_switches)
 }

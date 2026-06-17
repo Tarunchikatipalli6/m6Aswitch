@@ -105,6 +105,7 @@ annotate_m6a_switches <- function(m6a_sites, iso_switches, iso_sequences) {
   
   return(result)
 }
+
 #' Find DRACH Motif at m6A Site
 #'
 #' Checks if an m6A site location matches a DRACH motif pattern 

@@ -42,10 +42,15 @@ find_motif <- function(sequence, position, context_bp = 2) {
   # C = cytosine
   # H = A/C/U (any except G)
   
-  # DRACH is typically centered on A
-  # Search within window for pattern: [AGAU]RACH or [AGAU]ACH
+  # DRACH pattern: [AGU][AG][AU]C[AUC]
+  # More flexible: look for D-R-A-C-H where:
+  # - D is at any position in window
+  # - R follows D
+  # - A follows R
+  # - C follows A
+  # - H follows C
   
-  drach_pattern <- "[AGAU]R[AU]CH"  # Simplified: D=A/G/U, R=A/G, A=A/U, C=C, H=A/C/U
+  drach_pattern <- "[AGU][AG][AU]C[AUC]"
   
   if (grepl(drach_pattern, window, ignore.case = TRUE)) {
     return(TRUE)
@@ -72,29 +77,54 @@ annotate_drach <- function(m6a_switches, sequences) {
     stop("m6a_switches must be a data.table")
   }
   
+  # Handle empty input
+  if (nrow(m6a_switches) == 0) {
+    m6a_switches[, drach_motif := logical(0)]
+    return(m6a_switches)
+  }
+  
   # Merge sequences
   seq_map <- sequences[, .(isoform_id, sequence)]
   
   m6a_switches[, drach_motif := NA]
+  m6a_switches[, drach_motif_a := NA_character_]
+  m6a_switches[, drach_motif_b := NA_character_]
   
   for (i in 1:nrow(m6a_switches)) {
     iso_a <- m6a_switches[i, isoform_a]
     iso_b <- m6a_switches[i, isoform_b]
     position <- m6a_switches[i, position]
+    m6a_in_a <- m6a_switches[i, m6a_in_isoform_a]
+    m6a_in_b <- m6a_switches[i, m6a_in_isoform_b]
+    
+    # Skip if position is NA or not numeric
+    if (is.na(position) || !is.numeric(position)) {
+      next
+    }
     
     # Check DRACH in isoform A (if m6A present)
-    if (m6a_switches[i, m6a_in_isoform_a]) {
-      seq_a <- seq_map[isoform_id == iso_a, sequence]
-      if (length(seq_a) > 0) {
-        m6a_switches[i, drach_motif_a := find_motif(seq_a, position)]
+    if (!is.na(m6a_in_a) && m6a_in_a) {
+      seq_a_vec <- seq_map[isoform_id == iso_a, sequence]
+      if (length(seq_a_vec) > 0) {
+        seq_a <- seq_a_vec[1]  # Extract first element
+        tryCatch({
+          m6a_switches[i, drach_motif_a := find_motif(seq_a, position)]
+        }, error = function(e) {
+          NULL
+        })
       }
     }
     
     # Check DRACH in isoform B (if m6A present)
-    if (m6a_switches[i, m6a_in_isoform_b]) {
-      seq_b <- seq_map[isoform_id == iso_b, sequence]
-      if (length(seq_b) > 0) {
-        m6a_switches[i, drach_motif_b := find_motif(seq_b, position)]
+    if (!is.na(m6a_in_b) && m6a_in_b) {
+      seq_b_vec <- seq_map[isoform_id == iso_b, sequence]
+      if (length(seq_b_vec) > 0) {
+        seq_b <- seq_b_vec[1]  # Extract first element
+        tryCatch({
+          m6a_switches[i, drach_motif_b := find_motif(seq_b, position)]
+        }, error = function(e) {
+          NULL
+        })
       }
     }
   }

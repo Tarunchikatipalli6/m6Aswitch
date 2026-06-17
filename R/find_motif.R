@@ -64,10 +64,10 @@ find_motif <- function(sequence, position, context_bp = 2) {
 #' @export
 annotate_drach <- function(m6a_switches, sequences) {
 
-  if (!is.data.table(m6a_switches)) {
+  if (!data.table::is.data.table(m6a_switches)) {
     stop("m6a_switches must be a data.table")
   }
-  if (!is.data.table(sequences)) {
+  if (!data.table::is.data.table(sequences)) {
     stop("sequences must be a data.table")
   }
   if (!all(c("isoform_id", "sequence") %in% names(sequences))) {
@@ -82,49 +82,57 @@ annotate_drach <- function(m6a_switches, sequences) {
     return(m6a_switches)
   }
 
-  # Merge sequences (unique isoform map)
-  seq_map <- unique(sequences[, .(isoform_id, sequence)], by = "isoform_id")
-
+  # Reset motif columns each run (prevents old type contamination)
+  m6a_switches[, c("drach_motif_a", "drach_motif_b", "drach_motif") := NULL]
   m6a_switches[, drach_motif_a := as.logical(NA)]
   m6a_switches[, drach_motif_b := as.logical(NA)]
+
+  seq_map <- unique(sequences[, .(isoform_id, sequence)], by = "isoform_id")
 
   for (i in seq_len(nrow(m6a_switches))) {
     iso_a <- m6a_switches[i, isoform_a]
     iso_b <- m6a_switches[i, isoform_b]
-    position <- m6a_switches[i, position]
-    m6a_in_a <- isTRUE(m6a_switches[i, m6a_in_isoform_a])
-    m6a_in_b <- isTRUE(m6a_switches[i, m6a_in_isoform_b])
+    pos  <- m6a_switches[i, position]
 
-    if (is.na(position)) next
+    in_a <- isTRUE(m6a_switches[i, m6a_in_isoform_a])
+    in_b <- isTRUE(m6a_switches[i, m6a_in_isoform_b])
 
-    # Check DRACH in isoform A (if m6A present)
-    if (m6a_in_a) {
+    if (is.na(pos)) next
+
+    if (in_a) {
       seq_a <- seq_map[isoform_id == iso_a, sequence]
       if (length(seq_a) > 0 && !is.na(seq_a[1])) {
         m6a_switches[i, drach_motif_a := tryCatch(
-          find_motif(seq_a[1], position),
+          find_motif(seq_a[1], pos),
           error = function(e) as.logical(NA)
         )]
       }
     }
 
-    # Check DRACH in isoform B (if m6A present)
-    if (m6a_in_b) {
+    if (in_b) {
       seq_b <- seq_map[isoform_id == iso_b, sequence]
       if (length(seq_b) > 0 && !is.na(seq_b[1])) {
         m6a_switches[i, drach_motif_b := tryCatch(
-          find_motif(seq_b[1], position),
+          find_motif(seq_b[1], pos),
           error = function(e) as.logical(NA)
         )]
       }
     }
   }
 
-  # Summary field across A/B for each row
-  m6a_switches[, drach_motif := fifelse(
-    isTRUE(drach_motif_a) | isTRUE(drach_motif_b), TRUE,
-    fifelse(!is.na(drach_motif_a) & !is.na(drach_motif_b) &
-              !drach_motif_a & !drach_motif_b, FALSE, as.logical(NA))
+  # Force logical type before summary
+  m6a_switches[, drach_motif_a := as.logical(drach_motif_a)]
+  m6a_switches[, drach_motif_b := as.logical(drach_motif_b)]
+
+  # Row-wise summary
+  m6a_switches[, drach_motif := data.table::fifelse(
+    (isTRUE(drach_motif_a) || isTRUE(drach_motif_b)), TRUE,
+    data.table::fifelse(
+      (!is.na(drach_motif_a) && !is.na(drach_motif_b) &&
+         identical(drach_motif_a, FALSE) && identical(drach_motif_b, FALSE)),
+      FALSE,
+      as.logical(NA)
+    )
   ), by = seq_len(nrow(m6a_switches))]
 
   return(m6a_switches)

@@ -20,6 +20,7 @@ Imports:
     tidyr,
     GenomicRanges,
     GenomicFeatures,
+    txdbmaker,
     IRanges,
     igraph,
     ggplot2,

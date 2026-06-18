@@ -46,8 +46,8 @@ export_annotated_switches <- function(m6a_switches,
     # Create BED-format data
     bed_data <- m6a_switches[, .(
       chrom = gene_id,  # Use gene as chromosome placeholder
-      chromStart = position - 1,  # BED is 0-indexed
-      chromEnd = position,
+      chromStart = if ("start" %in% names(m6a_switches)) start - 1 else position - 1,
+      chromEnd = if ("start" %in% names(m6a_switches)) start else position,
       name = m6a_fate,
       score = round(probability_a * 100, 0),  # Use isoform A probability as score
       strand = "+",

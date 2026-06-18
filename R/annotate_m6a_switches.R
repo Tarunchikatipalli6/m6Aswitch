@@ -1,36 +1,63 @@
-#' Annotate m6A Changes Across Isoform Switches
+#' Annotate m6A Changes Across Isoform Switches (Transcript Coordinates)
 #'
+#' DEPRECATED FOR PUBLICATION USE.
+#' 
 #' Core function: integrates m6A sites and isoform switches to identify which
-#' m6A sites are gained or lost during isoform switching events. Preserves
-#' condition information for biological interpretation.
+#' m6A sites are gained or lost during isoform switching events. 
+#' 
+#' WARNING: This function compares transcript-level positions directly, which can
+#' produce FALSE calls when isoforms have different exon structures (see Details).
+#' For publication-quality results, use annotate_m6a_switches_genomic() instead.
 #'
 #' @param m6a_sites data.table from parse_m6anet()
 #' @param iso_switches data.table from parse_isoform_switch()
 #' @param iso_sequences data.table with columns: isoform_id, sequence
-#'        (currently validated for compatibility; not used in this function)
 #'
 #' @return data.table with columns:
 #'   - gene_id, isoform_a, isoform_b (switch info)
 #'   - condition_1, condition_2 (condition labels from the comparison)
-#'   - position (m6A position in transcript/genomic coordinates from input)
+#'   - position (m6A position in TRANSCRIPT coordinates - see Details)
 #'   - m6a_in_isoform_a, m6a_in_isoform_b (TRUE/FALSE)
 #'   - m6a_fate (LOST, GAINED, RETAINED)
 #'   - probability_a, probability_b (m6A probabilities in each isoform)
 #'   - fdr, dif (isoform switch FDR and direction indicator)
 #'
 #' @details
-#' m6A fate categories:
-#' - LOST: m6A present in isoform_a (condition_1) but absent in isoform_b (condition_2)
-#' - GAINED: m6A absent in isoform_a (condition_1) but present in isoform_b (condition_2)
-#' - RETAINED: m6A present in both isoforms across the condition comparison
+#' CRITICAL CAVEAT: This function operates on transcript-level coordinates.
+#' Position 150 in isoform A and position 150 in isoform B are counted from the
+#' start of each transcript independently. If the isoforms have different exon
+#' structures (e.g., one skips an exon), these identical position numbers may
+#' correspond to completely different genomic locations.
+#'
+#' Example of the problem:
+#'   Isoform A: Exon1 (chr10:1000-1100) + Exon2 (chr10:5000-5200)
+#'   Isoform B: Exon1 (chr10:1000-1100) + Exon3 (chr10:8000-8200)  [Exon2 skipped]
+#'
+#'   Position 150 in both transcripts:
+#'   - Isoform A position 150 = genomic chr10:5050 (in Exon2)
+#'   - Isoform B position 150 = genomic chr10:8050 (in Exon3)
+#'
+#'   This function would compare these as "same position" and report RETAINED,
+#'   but they are actually at different genomic loci.
+#'
+#' FOR PUBLICATION: Use annotate_m6a_switches_genomic() with a GTF file instead.
+#' This lifts coordinates to the genome and enables scientifically valid comparisons.
+#'
+#' m6A fate categories (transcript-level, use with caution):
+#' - LOST: m6A at this transcript position in isoform_a but not isoform_b
+#' - GAINED: m6A at this transcript position in isoform_b but not isoform_a
+#' - RETAINED: m6A at this transcript position in both isoforms
 #'
 #' @examples
 #' \dontrun{
+#' # NOT RECOMMENDED FOR PUBLICATION
+#' # Use this only for exploratory analysis or when isoforms share identical exon structure
 #' m6a_switches <- annotate_m6a_switches(m6a_sites, iso_switches, iso_sequences)
 #' }
 #'
+#' @seealso annotate_m6a_switches_genomic() for publication-quality genomic coordinate analysis
+#'
 #' @import data.table
-#' @import GenomicRanges
 #'
 #' @export
 annotate_m6a_switches <- function(m6a_sites, iso_switches, iso_sequences) {
@@ -184,7 +211,8 @@ find_motif <- function(sequence, position, context_bp = 2) {
 #'
 #' Adds DRACH motif annotations to m6A switching results.
 #'
-#' @param m6a_switches data.table from annotate_m6a_switches()
+#' @param m6a_switches data.table from annotate_m6a_switches() or 
+#'        annotate_m6a_switches_genomic()
 #' @param sequences data.table with columns: isoform_id, sequence
 #'
 #' @return m6a_switches with added columns:
@@ -222,10 +250,19 @@ annotate_drach <- function(m6a_switches, sequences) {
   m6a_switches[, drach_motif_a := as.logical(NA)]
   m6a_switches[, drach_motif_b := as.logical(NA)]
 
+  # Determine which column contains position information
+  if ("position" %in% names(m6a_switches)) {
+    pos_col <- "position"
+  } else if ("start" %in% names(m6a_switches)) {
+    pos_col <- "start"  # Genomic coordinates
+  } else {
+    stop("m6a_switches must contain either 'position' or 'start' column")
+  }
+
   for (i in seq_len(nrow(m6a_switches))) {
     iso_a <- m6a_switches[i, isoform_a]
     iso_b <- m6a_switches[i, isoform_b]
-    pos <- m6a_switches[i, position]
+    pos <- m6a_switches[i, get(pos_col)]
     in_a <- isTRUE(m6a_switches[i, m6a_in_isoform_a])
     in_b <- isTRUE(m6a_switches[i, m6a_in_isoform_b])
 

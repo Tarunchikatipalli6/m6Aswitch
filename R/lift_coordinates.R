@@ -51,7 +51,8 @@
 #' genomic_sites <- lift_m6a_to_genomic(m6a_sites, "genome.gtf")
 #' }
 #'
-#' @import GenomicFeatures
+#' @importFrom txdbmaker makeTxDbFromGFF
+#' @importFrom GenomicFeatures exonsBy mapFromTranscripts
 #' @importFrom IRanges IRanges
 #' @importFrom GenomicRanges GRanges
 #' @import data.table
@@ -71,7 +72,7 @@ lift_m6a_to_genomic <- function(m6a_sites, gtf_file) {
   }
 
   # Build TxDb from GTF
-  txdb <- GenomicFeatures::makeTxDbFromGFF(gtf_file)
+  txdb <- txdbmaker::makeTxDbFromGFF(gtf_file)
 
   # Get exon structure for each transcript (needed for correct coordinate conversion)
   # exonsBy() returns the actual exons that make up each transcript

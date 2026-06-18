@@ -27,7 +27,6 @@ export_annotated_switches <- function(m6a_switches,
   format <- match.arg(format, c("csv", "bed", "both"))
   output_files <- list()
 
-  # CSV export
   if (format %in% c("csv", "both")) {
     csv_file <- sprintf("%s.csv", output_prefix)
     data.table::fwrite(m6a_switches, file = csv_file)
@@ -35,20 +34,19 @@ export_annotated_switches <- function(m6a_switches,
     message("Wrote CSV: ", csv_file)
   }
 
-  # BED export
   if (format %in% c("bed", "both") && add_igv_track) {
     bed_file <- sprintf("%s.bed", output_prefix)
 
     has_genomic <- "start" %in% names(m6a_switches)
 
     if (has_genomic) {
-      chrom_col <- m6a_switches$seqname
-      start_col <- m6a_switches$start - 1
-      end_col   <- m6a_switches$start
+      chrom_col  <- m6a_switches$seqname
+      start_col  <- m6a_switches$start - 1L
+      end_col    <- m6a_switches$start
       strand_col <- m6a_switches$strand
     } else {
       chrom_col  <- m6a_switches$gene_id
-      start_col  <- m6a_switches$position - 1
+      start_col  <- m6a_switches$position - 1L
       end_col    <- m6a_switches$position
       strand_col <- "+"
     }

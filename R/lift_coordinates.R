@@ -19,13 +19,39 @@
 #'   }
 #'   Any additional columns from \code{m6a_sites} are forwarded as metadata.
 #'
+#' @details
+#' The GTF file serves as a map that specifies which exons belong to each transcript
+#' and their exact positions on the chromosome. This function uses that map to
+#' convert from transcript numbering to chromosome numbering.
+#'
+#' The key insight: mapFromTranscripts() needs the actual exon structure to correctly
+#' skip over introns. Using transcript boundaries alone would place position 150 in
+#' the intron (wrong). Using exon-by-exon structure allows correct conversion:
+#'
+#' Example:
+#'   Isoform A exon structure (from GTF):
+#'     Exon1: chr10:1000-1100 (positions 1-100 in transcript)
+#'     Exon2: chr10:5000-5200 (positions 101-300 in transcript)
+#'     [Intron: chr10:1100-5000 — skipped]
+#'
+#'   Input: position 150 in transcript ENST001
+#'   Lookup: Position 150 is 50bp into Exon2
+#'   Calculation: Exon2 starts at chr10:5000, so position 150 = chr10:5050
+#'   Output: GRanges with seqname=chr10, start=5050, end=5050
+#'
+#' If we only used transcript boundaries (start=1000, end=5200):
+#'   Naive calculation: 1000 + 150 = chr10:1150 ✗ WRONG (inside intron)
+#'
+#' With exon structure:
+#'   Correct calculation: chr10:5050 ✓ RIGHT (in Exon2)
+#'
 #' @examples
 #' \dontrun{
 #' m6a_sites <- parse_m6anet("m6anet_predictions.csv")
 #' genomic_sites <- lift_m6a_to_genomic(m6a_sites, "genome.gtf")
 #' }
 #'
-#' @importFrom GenomicFeatures makeTxDbFromGFF transcripts mapFromTranscripts
+#' @importFrom GenomicFeatures makeTxDbFromGFF exonsBy mapFromTranscripts
 #' @importFrom IRanges IRanges
 #' @importFrom GenomicRanges GRanges
 #' @import data.table
@@ -47,8 +73,10 @@ lift_m6a_to_genomic <- function(m6a_sites, gtf_file) {
   # Build TxDb from GTF
   txdb <- GenomicFeatures::makeTxDbFromGFF(gtf_file)
 
-  # Get all transcripts as GRanges with tx_name metadata
-  all_tx <- GenomicFeatures::transcripts(txdb, columns = "tx_name")
+  # Get exon structure for each transcript (needed for correct coordinate conversion)
+  # exonsBy() returns the actual exons that make up each transcript
+  # This is critical because mapFromTranscripts() needs to know where introns are
+  all_exons <- GenomicFeatures::exonsBy(txdb, by = "tx", use.names = TRUE)
 
   other_cols <- setdiff(names(m6a_sites), c("transcript_id", "position", "probability"))
 
@@ -58,7 +86,8 @@ lift_m6a_to_genomic <- function(m6a_sites, gtf_file) {
     tx_id  <- m6a_sites[i, transcript_id]
     tx_pos <- as.integer(m6a_sites[i, position])
 
-    tx_range <- all_tx[all_tx$tx_name == tx_id]
+    # Look up the exon structure for this transcript
+    tx_range <- all_exons[names(all_exons) == tx_id]
 
     if (length(tx_range) == 0) {
       warning(sprintf("Transcript %s not found in GTF", tx_id))
@@ -120,6 +149,8 @@ lift_m6a_to_genomic <- function(m6a_sites, gtf_file) {
 
 #' Annotate Isoform Switches Using Genomic m6A Coordinates
 #'
+#' RECOMMENDED FOR PUBLICATION USE.
+#'
 #' Equivalent to \code{annotate_m6a_switches()} but operates on genomic
 #' coordinates (GRanges) produced by \code{lift_m6a_to_genomic()}. Because
 #' m6A sites are compared at the same genomic locus across isoforms, the
@@ -129,6 +160,8 @@ lift_m6a_to_genomic <- function(m6a_sites, gtf_file) {
 #' @param m6a_sites_gr GRanges object from \code{lift_m6a_to_genomic()}.
 #'   Must have metadata column \code{transcript_id} and \code{probability}.
 #' @param iso_switches data.table from \code{parse_isoform_switch()}.
+#'   Should include condition_1, condition_2, and dif columns for full
+#'   biological interpretation.
 #' @param sequences data.table with columns \code{isoform_id} and \code{sequence}
 #'   (used for DRACH annotation in downstream steps; validated here for
 #'   early error detection).
@@ -137,6 +170,7 @@ lift_m6a_to_genomic <- function(m6a_sites, gtf_file) {
 #'   \describe{
 #'     \item{gene_id}{Gene identifier}
 #'     \item{isoform_a, isoform_b}{Isoform identifiers}
+#'     \item{condition_1, condition_2}{Condition labels (pairwise comparison)}
 #'     \item{genomic_position}{Character representation of the genomic range}
 #'     \item{seqname}{Chromosome/scaffold name}
 #'     \item{start, end}{Genomic coordinates (1-based)}
@@ -145,14 +179,64 @@ lift_m6a_to_genomic <- function(m6a_sites, gtf_file) {
 #'     \item{m6a_fate}{LOST, GAINED, or RETAINED}
 #'     \item{probability_a, probability_b}{m6A probabilities per isoform}
 #'     \item{fdr}{Isoform switch FDR}
+#'     \item{dif}{Direction indicator from isoform switch}
 #'   }
+#'
+#' @details
+#' This is the publication-quality version of m6A-isoform integration because:
+#'
+#' 1. GENOMIC COORDINATES: Compares m6A sites at the same genomic location across
+#'    isoforms, not just matching transcript position numbers.
+#'
+#' 2. EXON STRUCTURE AWARE: Correctly handles isoforms with different exon structures
+#'    (e.g., one isoform skips an exon). Position 150 in two isoforms with different
+#'    exon structures will be compared at their actual genomic locations, which may
+#'    be completely different.
+#'
+#' 3. FALSE CALL PREVENTION: Avoids false LOST/GAINED/RETAINED calls that arise from
+#'    comparing transcript position numbers across isoforms with different structures.
+#'
+#' Example of why this matters:
+#'   Isoform A: Exon1 (chr10:1000-1100) + Exon2 (chr10:5000-5200)
+#'   Isoform B: Exon1 (chr10:1000-1100) + Exon3 (chr10:8000-8200)  [Exon2 skipped]
+#'
+#'   Using transcript positions (WRONG):
+#'     Position 150 in A: has m6A
+#'     Position 150 in B: has m6A
+#'     Tool says: RETAINED ✗ (FALSE)
+#'
+#'   Using genomic coordinates (CORRECT):
+#'     Genomic chr10:5050 in A: has m6A
+#'     Genomic chr10:5050 in B: DOESN'T EXIST (region skipped)
+#'     Tool says: LOST ✓ (TRUE)
+#'
+#' m6A fate categories (genomically valid):
+#' - LOST: m6A at this genomic location in isoform_a but not in isoform_b
+#' - GAINED: m6A at this genomic location in isoform_b but not in isoform_a
+#' - RETAINED: m6A at this genomic location in both isoforms
+#'
+#' @seealso annotate_m6a_switches() for quick exploratory analysis (not for publication)
 #'
 #' @examples
 #' \dontrun{
-#' genomic_sites  <- lift_m6a_to_genomic(m6a_sites, "genome.gtf")
-#' iso_switches   <- parse_isoform_switch("isoform_switches.txt")
-#' iso_sequences  <- data.table::fread("isoform_sequences.csv")
-#' m6a_annotated  <- annotate_m6a_switches_genomic(genomic_sites, iso_switches, iso_sequences)
+#' # PUBLICATION-QUALITY WORKFLOW
+#' m6a_sites <- parse_m6anet("m6anet_predictions.csv")
+#' iso_switches <- parse_isoform_switch("isoform_switches.txt")
+#' iso_sequences <- data.table::fread("isoform_sequences.csv")
+#'
+#' # Step 1: Lift to genomic coordinates
+#' genomic_sites <- lift_m6a_to_genomic(m6a_sites, "genome.gtf")
+#'
+#' # Step 2: Compare using genomic coordinates (scientifically valid)
+#' m6a_switches <- annotate_m6a_switches_genomic(
+#'   genomic_sites, iso_switches, iso_sequences
+#' )
+#'
+#' # Step 3: Add functional annotation
+#' m6a_final <- annotate_drach(m6a_switches, iso_sequences)
+#'
+#' # Step 4: Report results
+#' # Now your LOST/GAINED/RETAINED calls are biologically defensible
 #' }
 #'
 #' @importFrom GenomicRanges findOverlaps reduce seqnames start end strand
@@ -193,7 +277,17 @@ annotate_m6a_switches_genomic <- function(m6a_sites_gr, iso_switches, sequences)
     iso_b  <- switch_row$isoform_b
     fdr    <- switch_row$fdr
 
-    # Subset GRanges by transcript_id metadata
+    # Extract condition information (pairwise comparison)
+    condition_1 <- if ("condition_1" %in% names(switch_row))
+      switch_row$condition_1 else NA_character_
+    condition_2 <- if ("condition_2" %in% names(switch_row))
+      switch_row$condition_2 else NA_character_
+
+    # Extract dIF (direction indicator)
+    dif <- if ("dif" %in% names(switch_row))
+      switch_row$dif else NA_real_
+
+    # Subset GRanges by transcript_id metadata (genomic coordinates)
     m6a_in_a_gr <- m6a_sites_gr[m6a_sites_gr$transcript_id == iso_a]
     m6a_in_b_gr <- m6a_sites_gr[m6a_sites_gr$transcript_id == iso_b]
 
@@ -201,12 +295,15 @@ annotate_m6a_switches_genomic <- function(m6a_sites_gr, iso_switches, sequences)
       next
     }
 
+    # Merge overlapping/identical ranges to get unique genomic positions
     all_ranges <- c(m6a_in_a_gr, m6a_in_b_gr)
     merged     <- GenomicRanges::reduce(all_ranges, drop.empty.ranges = TRUE)
 
+    # For each unique genomic position, determine fate
     for (j in seq_len(length(merged))) {
       genomic_pos <- merged[j]
 
+      # Check if this genomic position has m6A in isoform A
       overlaps_a <- GenomicRanges::findOverlaps(genomic_pos, m6a_in_a_gr, type = "equal")
       in_a       <- length(overlaps_a) > 0
       prob_a     <- if (in_a) {
@@ -215,6 +312,7 @@ annotate_m6a_switches_genomic <- function(m6a_sites_gr, iso_switches, sequences)
         NA_real_
       }
 
+      # Check if this genomic position has m6A in isoform B
       overlaps_b <- GenomicRanges::findOverlaps(genomic_pos, m6a_in_b_gr, type = "equal")
       in_b       <- length(overlaps_b) > 0
       prob_b     <- if (in_b) {
@@ -223,18 +321,21 @@ annotate_m6a_switches_genomic <- function(m6a_sites_gr, iso_switches, sequences)
         NA_real_
       }
 
+      # Determine fate (genomically valid)
       fate <- if (in_a && !in_b) {
-        "LOST"
+        "LOST"       # m6A at this genomic locus in condition_1 but not condition_2
       } else if (!in_a && in_b) {
-        "GAINED"
+        "GAINED"     # m6A at this genomic locus not in condition_1 but present in condition_2
       } else {
-        "RETAINED"
+        "RETAINED"   # m6A at this genomic locus in both conditions
       }
 
       result_list[[length(result_list) + 1]] <- data.table::data.table(
         gene_id            = gene,
         isoform_a          = iso_a,
         isoform_b          = iso_b,
+        condition_1        = condition_1,
+        condition_2        = condition_2,
         genomic_position   = as.character(genomic_pos),
         seqname            = as.character(GenomicRanges::seqnames(genomic_pos)),
         start              = GenomicRanges::start(genomic_pos),
@@ -245,7 +346,8 @@ annotate_m6a_switches_genomic <- function(m6a_sites_gr, iso_switches, sequences)
         m6a_fate           = fate,
         probability_a      = prob_a,
         probability_b      = prob_b,
-        fdr                = fdr
+        fdr                = fdr,
+        dif                = dif
       )
     }
   }

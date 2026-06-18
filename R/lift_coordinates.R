@@ -51,7 +51,7 @@
 #' genomic_sites <- lift_m6a_to_genomic(m6a_sites, "genome.gtf")
 #' }
 #'
-#' @importFrom GenomicFeatures makeTxDbFromGFF exonsBy mapFromTranscripts
+#' @import GenomicFeatures
 #' @importFrom IRanges IRanges
 #' @importFrom GenomicRanges GRanges
 #' @import data.table

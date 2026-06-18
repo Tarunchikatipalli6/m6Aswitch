@@ -1,7 +1,8 @@
 #' Annotate m6A Changes Across Isoform Switches
 #'
 #' Core function: integrates m6A sites and isoform switches to identify which
-#' m6A sites are gained or lost during isoform switching events.
+#' m6A sites are gained or lost during isoform switching events. Preserves
+#' condition information for biological interpretation.
 #'
 #' @param m6a_sites data.table from parse_m6anet()
 #' @param iso_switches data.table from parse_isoform_switch()
@@ -10,11 +11,18 @@
 #'
 #' @return data.table with columns:
 #'   - gene_id, isoform_a, isoform_b (switch info)
+#'   - condition_1, condition_2 (condition labels from the comparison)
 #'   - position (m6A position in transcript/genomic coordinates from input)
 #'   - m6a_in_isoform_a, m6a_in_isoform_b (TRUE/FALSE)
 #'   - m6a_fate (LOST, GAINED, RETAINED)
 #'   - probability_a, probability_b (m6A probabilities in each isoform)
-#'   - fdr (isoform switch FDR)
+#'   - fdr, dif (isoform switch FDR and direction indicator)
+#'
+#' @details
+#' m6A fate categories:
+#' - LOST: m6A present in isoform_a (condition_1) but absent in isoform_b (condition_2)
+#' - GAINED: m6A absent in isoform_a (condition_1) but present in isoform_b (condition_2)
+#' - RETAINED: m6A present in both isoforms across the condition comparison
 #'
 #' @examples
 #' \dontrun{
@@ -28,13 +36,13 @@
 annotate_m6a_switches <- function(m6a_sites, iso_switches, iso_sequences) {
 
   # Validate inputs
-  if (!is.data.table(m6a_sites)) {
+  if (!data.table::is.data.table(m6a_sites)) {
     stop("m6a_sites must be a data.table from parse_m6anet()")
   }
-  if (!is.data.table(iso_switches)) {
+  if (!data.table::is.data.table(iso_switches)) {
     stop("iso_switches must be a data.table from parse_isoform_switch()")
   }
-  if (!is.data.table(iso_sequences)) {
+  if (!data.table::is.data.table(iso_sequences)) {
     stop("iso_sequences must be a data.table with columns: isoform_id, sequence")
   }
 
@@ -59,6 +67,16 @@ annotate_m6a_switches <- function(m6a_sites, iso_switches, iso_sequences) {
     iso_a <- switch_row$isoform_a
     iso_b <- switch_row$isoform_b
     fdr <- switch_row$fdr
+
+    # Extract condition information (pairwise comparison)
+    condition_1 <- if ("condition_1" %in% names(switch_row))
+      switch_row$condition_1 else NA_character_
+    condition_2 <- if ("condition_2" %in% names(switch_row))
+      switch_row$condition_2 else NA_character_
+
+    # Extract dIF (direction indicator)
+    dif <- if ("dif" %in% names(switch_row))
+      switch_row$dif else NA_real_
 
     # Get m6A sites for both isoforms
     m6a_in_a <- iso_m6a_map[isoform_id == iso_a]
@@ -88,13 +106,16 @@ annotate_m6a_switches <- function(m6a_sites, iso_switches, iso_sequences) {
           gene_id = gene,
           isoform_a = iso_a,
           isoform_b = iso_b,
+          condition_1 = condition_1,
+          condition_2 = condition_2,
           position = pos,
           m6a_in_isoform_a = in_a,
           m6a_in_isoform_b = in_b,
           m6a_fate = fate,
           probability_a = if (length(prob_a) > 0) prob_a[1] else NA_real_,
           probability_b = if (length(prob_b) > 0) prob_b[1] else NA_real_,
-          fdr = fdr
+          fdr = fdr,
+          dif = dif
         )
       }
     }
@@ -105,8 +126,8 @@ annotate_m6a_switches <- function(m6a_sites, iso_switches, iso_sequences) {
     return(data.table())
   }
 
-  result <- rbindlist(result_list)
-  setorder(result, gene_id, fdr, m6a_fate)
+  result <- data.table::rbindlist(result_list)
+  data.table::setorder(result, gene_id, fdr, m6a_fate)
 
   return(result)
 }
@@ -177,10 +198,10 @@ find_motif <- function(sequence, position, context_bp = 2) {
 #' @export
 annotate_drach <- function(m6a_switches, sequences) {
 
-  if (!is.data.table(m6a_switches)) {
+  if (!data.table::is.data.table(m6a_switches)) {
     stop("m6a_switches must be a data.table")
   }
-  if (!is.data.table(sequences)) {
+  if (!data.table::is.data.table(sequences)) {
     stop("sequences must be a data.table")
   }
   if (!all(c("isoform_id", "sequence") %in% names(sequences))) {

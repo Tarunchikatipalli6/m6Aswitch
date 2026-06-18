@@ -97,7 +97,8 @@ annotate_drach <- function(m6a_switches, sequences) {
   for (i in seq_len(nrow(m6a_switches))) {
     iso_a <- m6a_switches[i, isoform_a]
     iso_b <- m6a_switches[i, isoform_b]
-    pos  <- m6a_switches[i, position]
+    pos_col <- if ("transcript_position" %in% names(m6a_switches)) "transcript_position" else "position"
+    pos <- m6a_switches[i, get(pos_col)]
 
     in_a <- isTRUE(m6a_switches[i, m6a_in_isoform_a])
     in_b <- isTRUE(m6a_switches[i, m6a_in_isoform_b])

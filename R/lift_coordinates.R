@@ -173,7 +173,8 @@ lift_m6a_to_genomic <- function(m6a_sites, gtf_file) {
 #'     \item{condition_1, condition_2}{Condition labels (pairwise comparison)}
 #'     \item{genomic_position}{Character representation of the genomic range}
 #'     \item{seqname}{Chromosome/scaffold name}
-#'     \item{start, end}{Genomic coordinates (1-based)}
+#'     \item{start, end}{Genomic coordinates (1-based) for comparison}
+#'     \item{transcript_position}{Original transcript coordinate (for motif lookup)}
 #'     \item{strand}{Strand of the m6A site}
 #'     \item{m6a_in_isoform_a, m6a_in_isoform_b}{Logical: site detected in each isoform}
 #'     \item{m6a_fate}{LOST, GAINED, or RETAINED}
@@ -195,6 +196,9 @@ lift_m6a_to_genomic <- function(m6a_sites, gtf_file) {
 #'
 #' 3. FALSE CALL PREVENTION: Avoids false LOST/GAINED/RETAINED calls that arise from
 #'    comparing transcript position numbers across isoforms with different structures.
+#'
+#' 4. DRACH VALIDATION READY: Preserves transcript_position for motif lookup in
+#'    downstream annotate_drach() function.
 #'
 #' Example of why this matters:
 #'   Isoform A: Exon1 (chr10:1000-1100) + Exon2 (chr10:5000-5200)
@@ -240,7 +244,7 @@ lift_m6a_to_genomic <- function(m6a_sites, gtf_file) {
 #' }
 #'
 #' @importFrom GenomicRanges findOverlaps reduce seqnames start end strand
-#' @importFrom S4Vectors subjectHits
+#' @importFrom S4Vectors subjectHits mcols
 #' @import data.table
 #' @import methods
 #'
@@ -311,6 +315,13 @@ annotate_m6a_switches_genomic <- function(m6a_sites_gr, iso_switches, sequences)
       } else {
         NA_real_
       }
+      
+      # Get transcript position from isoform A (if available)
+      tx_pos_a <- if (in_a) {
+        m6a_in_a_gr$transcript_position[S4Vectors::subjectHits(overlaps_a)[1]]
+      } else {
+        NA_integer_
+      }
 
       # Check if this genomic position has m6A in isoform B
       overlaps_b <- GenomicRanges::findOverlaps(genomic_pos, m6a_in_b_gr, type = "equal")
@@ -320,6 +331,16 @@ annotate_m6a_switches_genomic <- function(m6a_sites_gr, iso_switches, sequences)
       } else {
         NA_real_
       }
+      
+      # Get transcript position from isoform B (if available)
+      tx_pos_b <- if (in_b) {
+        m6a_in_b_gr$transcript_position[S4Vectors::subjectHits(overlaps_b)[1]]
+      } else {
+        NA_integer_
+      }
+      
+      # Use the transcript position that's available (prefer non-NA)
+      transcript_pos <- if (!is.na(tx_pos_a)) tx_pos_a else tx_pos_b
 
       # Determine fate (genomically valid)
       fate <- if (in_a && !in_b) {
@@ -340,6 +361,7 @@ annotate_m6a_switches_genomic <- function(m6a_sites_gr, iso_switches, sequences)
         seqname            = as.character(GenomicRanges::seqnames(genomic_pos)),
         start              = GenomicRanges::start(genomic_pos),
         end                = GenomicRanges::end(genomic_pos),
+        transcript_position = transcript_pos,
         strand             = as.character(GenomicRanges::strand(genomic_pos)),
         m6a_in_isoform_a   = in_a,
         m6a_in_isoform_b   = in_b,

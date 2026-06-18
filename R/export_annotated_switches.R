@@ -43,29 +43,47 @@ export_annotated_switches <- function(m6a_switches,
   if (format %in% c("bed", "both") && add_igv_track) {
     bed_file <- sprintf("%s.bed", output_prefix)
     
-    # Create BED-format data
-    bed_data <- m6a_switches[, .(
-      chrom = gene_id,  # Use gene as chromosome placeholder
-      chromStart = if ("start" %in% names(m6a_switches)) start - 1 else position - 1,
-      chromEnd = if ("start" %in% names(m6a_switches)) start else position,
-      name = m6a_fate,
-      score = round(probability_a * 100, 0),  # Use isoform A probability as score
-      strand = "+",
-      thickStart = position - 1,
-      thickEnd = position,
-      itemRGB = ifelse(m6a_fate == "LOST", "255,0,0",
-                       ifelse(m6a_fate == "GAINED", "0,255,0", "0,0,255"))
-    )]
+# Export as BED format for IGV
+  if (format %in% c("bed", "both") && add_igv_track) {
+    bed_file <- sprintf("%s.bed", output_prefix)
     
-    # Sort by position
-    setorder(bed_data, chrom, chromStart)
+    # Handle both genomic workflow (has seqname/start) and transcript workflow (has position)
+    has_genomic <- "start" %in% names(m6a_switches)
     
-    # Write BED file with header comment
+    if (has_genomic) {
+      chrom_col   <- m6a_switches$seqname
+      start_col   <- m6a_switches$start - 1
+      end_col     <- m6a_switches$start
+    } else {
+      chrom_col   <- m6a_switches$gene_id
+      start_col   <- m6a_switches$position - 1
+      end_col     <- m6a_switches$position
+    }
+    
+    prob_score <- ifelse(
+      is.na(m6a_switches$probability_a),
+      m6a_switches$probability_b,
+      m6a_switches$probability_a
+    )
+    
+    bed_data <- data.table::data.table(
+      chrom      = chrom_col,
+      chromStart = start_col,
+      chromEnd   = end_col,
+      name       = m6a_switches$m6a_fate,
+      score      = round(prob_score * 100, 0),
+      strand     = if (has_genomic) m6a_switches$strand else "+",
+      itemRGB    = ifelse(m6a_switches$m6a_fate == "LOST",     "255,0,0",
+                   ifelse(m6a_switches$m6a_fate == "GAINED",   "0,255,0", "0,0,255"))
+    )
+    
+    data.table::setorder(bed_data, chrom, chromStart)
+    
     con <- file(bed_file, "w")
     writeLines("# m6A switches - color: LOST=red, GAINED=green, RETAINED=blue", con)
     close(con)
     
-    data.table::fwrite(bed_data, file = bed_file, sep = "\t", 
+    data.table::fwrite(bed_data, file = bed_file, sep = "\t",
                        col.names = TRUE, append = TRUE)
     output_files$bed <- bed_file
     message("Wrote BED: ", bed_file)

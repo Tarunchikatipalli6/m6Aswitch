@@ -210,6 +210,13 @@ find_motif <- function(sequence, position, context_bp = 2) {
 #' Annotate m6A Sites with DRACH Motif Status
 #'
 #' Adds DRACH motif annotations to m6A switching results.
+#' 
+#' Works with both transcript-level results (from annotate_m6a_switches()) and
+#' genomic-level results (from annotate_m6a_switches_genomic()).
+#' 
+#' IMPORTANT: This function uses transcript coordinates to look up positions in
+#' the sequence. For genomic results, the transcript_position column is used
+#' (not the genomic start/end coordinates).
 #'
 #' @param m6a_switches data.table from annotate_m6a_switches() or 
 #'        annotate_m6a_switches_genomic()
@@ -220,6 +227,15 @@ find_motif <- function(sequence, position, context_bp = 2) {
 #'   - drach_motif_b (logical)
 #'   - drach_motif (logical summary; TRUE if either side is TRUE,
 #'     FALSE if both present and FALSE, otherwise NA)
+#'
+#' @details
+#' Position lookup priority:
+#' 1. If transcript_position column exists (from lift_m6a_to_genomic + genomic workflow),
+#'    use that for motif lookup
+#' 2. Otherwise, use position column (from transcript-level workflow)
+#' 
+#' This ensures DRACH motifs are always checked at the correct transcript position,
+#' even when m6A sites have been lifted to genomic coordinates.
 #'
 #' @import data.table
 #'
@@ -250,13 +266,14 @@ annotate_drach <- function(m6a_switches, sequences) {
   m6a_switches[, drach_motif_a := as.logical(NA)]
   m6a_switches[, drach_motif_b := as.logical(NA)]
 
-  # Determine which column contains position information
-  if ("position" %in% names(m6a_switches)) {
+  # Determine which column contains position information for motif lookup
+  # Priority: transcript_position (from genomic workflow) > position (from transcript workflow)
+  if ("transcript_position" %in% names(m6a_switches)) {
+    pos_col <- "transcript_position"
+  } else if ("position" %in% names(m6a_switches)) {
     pos_col <- "position"
-  } else if ("start" %in% names(m6a_switches)) {
-    pos_col <- "start"  # Genomic coordinates
   } else {
-    stop("m6a_switches must contain either 'position' or 'start' column")
+    stop("m6a_switches must contain either 'transcript_position' or 'position' column")
   }
 
   for (i in seq_len(nrow(m6a_switches))) {

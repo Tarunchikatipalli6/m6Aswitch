@@ -315,7 +315,7 @@ annotate_m6a_switches_genomic <- function(m6a_sites_gr, iso_switches, sequences)
       } else {
         NA_real_
       }
-      
+
       # Get transcript position from isoform A (if available)
       tx_pos_a <- if (in_a) {
         m6a_in_a_gr$transcript_position[S4Vectors::subjectHits(overlaps_a)[1]]
@@ -331,14 +331,14 @@ annotate_m6a_switches_genomic <- function(m6a_sites_gr, iso_switches, sequences)
       } else {
         NA_real_
       }
-      
+
       # Get transcript position from isoform B (if available)
       tx_pos_b <- if (in_b) {
         m6a_in_b_gr$transcript_position[S4Vectors::subjectHits(overlaps_b)[1]]
       } else {
         NA_integer_
       }
-      
+
       # Use the transcript position that's available (prefer non-NA)
       transcript_pos <- if (!is.na(tx_pos_a)) tx_pos_a else tx_pos_b
 

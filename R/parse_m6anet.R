@@ -80,8 +80,9 @@ parse_m6anet <- function(m6anet_file,
          paste(required_cols, collapse = ", "))
   }
 
-  # Coerce position to numeric
-  m6a_data[, position := as.numeric(position)]
+# Coerce position to numeric
+# m6Anet reports 0-based positions — convert to 1-based for downstream use
+m6a_data[, position := as.numeric(position) + 1L]
 
   # Sort by transcript and position
   setorder(m6a_data, transcript_id, position)

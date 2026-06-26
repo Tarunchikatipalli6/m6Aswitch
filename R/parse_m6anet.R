@@ -43,7 +43,9 @@
 #' with SCARLET." *Nature Biotechnology* 41, 896–905.
 #'
 #' @return data.table with columns: transcript_id, position, probability,
-#'         gene_id (if available), strand, sequence_context
+#'         and kmer (5-mer sequence context, if present in the input file).
+#'         The kmer column is used by annotate_drach() for DRACH motif
+#'         annotation without requiring separate transcript sequence files.
 #'
 #' @examples
 #' \dontrun{
@@ -80,9 +82,16 @@ parse_m6anet <- function(m6anet_file,
          paste(required_cols, collapse = ", "))
   }
 
-# Coerce position to numeric
-# m6Anet reports 0-based positions — convert to 1-based for downstream use
-m6a_data[, position := as.numeric(position) + 1L]
+  # Coerce position to numeric
+  # m6Anet reports 0-based positions — convert to 1-based for downstream use
+  m6a_data[, position := as.numeric(position) + 1L]
+
+  # Keep kmer column if present (used by annotate_drach() for DRACH motif annotation)
+  keep_cols <- c("transcript_id", "position", "probability")
+  if ("kmer" %in% names(m6a_data)) {
+    keep_cols <- c(keep_cols, "kmer")
+  }
+  m6a_data <- m6a_data[, ..keep_cols]
 
   # Sort by transcript and position
   setorder(m6a_data, transcript_id, position)

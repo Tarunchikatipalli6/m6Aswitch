@@ -82,59 +82,109 @@ lift_m6a_to_genomic <- function(m6a_sites, gtf_file) {
   other_cols <- setdiff(names(m6a_sites), c("transcript_id", "position", "probability"))
 
   result_list <- list()
+  missing_tx <- data.table::data.table(transcript_id = character(), n = integer())
+  failed_map <- data.table::data.table(transcript_id = character(), n = integer())
 
-  for (i in seq_len(nrow(m6a_sites))) {
-    tx_id  <- m6a_sites[i, transcript_id]
-    tx_pos <- as.integer(m6a_sites[i, position])
+  sites_by_tx <- split(m6a_sites, by = "transcript_id", keep.by = FALSE, drop = TRUE)
 
-    # Look up the exon structure for this transcript
-    tx_range <- all_exons[names(all_exons) == tx_id]
+  for (tx_id in names(sites_by_tx)) {
+    tx_sites <- sites_by_tx[[tx_id]]
+    tx_range <- all_exons[[tx_id]]
 
-    if (length(tx_range) == 0) {
-      warning(sprintf("Transcript %s not found in GTF", tx_id))
+    if (is.null(tx_range) || length(tx_range) == 0) {
+      missing_tx <- rbind(
+        missing_tx,
+        data.table::data.table(transcript_id = tx_id, n = nrow(tx_sites))
+      )
       next
     }
 
-    # Build a single-base query in transcript space
+    tx_pos <- as.integer(tx_sites$position)
+    valid_pos <- !is.na(tx_pos)
+    if (!all(valid_pos)) {
+      failed_map <- rbind(
+        failed_map,
+        data.table::data.table(transcript_id = tx_id, n = sum(!valid_pos))
+      )
+    }
+    if (!any(valid_pos)) next
+
+    tx_sites_valid <- tx_sites[valid_pos]
+    tx_pos_valid <- tx_pos[valid_pos]
+
     tx_query <- GenomicRanges::GRanges(
-      seqnames = tx_id,
-      ranges   = IRanges::IRanges(start = tx_pos, end = tx_pos)
+      seqnames = rep(tx_id, length(tx_pos_valid)),
+      ranges = IRanges::IRanges(start = tx_pos_valid, end = tx_pos_valid)
     )
 
     genomic_ranges <- tryCatch(
       GenomicFeatures::mapFromTranscripts(tx_query, tx_range),
       error = function(e) {
-        warning(sprintf(
-          "Could not map position %d in transcript %s: %s",
-          tx_pos, tx_id, conditionMessage(e)
-        ))
+        failed_map <<- rbind(
+          failed_map,
+          data.table::data.table(transcript_id = tx_id, n = nrow(tx_sites_valid))
+        )
         NULL
       }
     )
 
     if (is.null(genomic_ranges) || length(genomic_ranges) == 0) {
-      warning(sprintf(
-        "Could not map position %d in transcript %s to genomic coords", tx_pos, tx_id
-      ))
+      failed_map <- rbind(
+        failed_map,
+        data.table::data.table(transcript_id = tx_id, n = nrow(tx_sites_valid))
+      )
       next
     }
 
-    genomic_ranges$transcript_id       <- tx_id
-    genomic_ranges$transcript_position <- tx_pos
-    genomic_ranges$probability         <- m6a_sites[i, probability]
-
-    for (col in other_cols) {
-      val <- m6a_sites[i, get(col)]
-      if (!is.na(val)) {
-        genomic_ranges[[col]] <- val
-      }
+    query_hits <- if ("xHits" %in% names(S4Vectors::mcols(genomic_ranges))) {
+      as.integer(S4Vectors::mcols(genomic_ranges)$xHits)
+    } else {
+      seq_len(min(length(genomic_ranges), nrow(tx_sites_valid)))
     }
 
-    result_list[[i]] <- genomic_ranges
+    mapped_sites <- tx_sites_valid[query_hits]
+    if (nrow(mapped_sites) < nrow(tx_sites_valid)) {
+      failed_map <- rbind(
+        failed_map,
+        data.table::data.table(transcript_id = tx_id, n = nrow(tx_sites_valid) - nrow(mapped_sites))
+      )
+    }
+
+    genomic_ranges$transcript_id <- mapped_sites$transcript_id
+    genomic_ranges$transcript_position <- as.integer(mapped_sites$position)
+    genomic_ranges$probability <- mapped_sites$probability
+
+    for (col in other_cols) {
+      genomic_ranges[[col]] <- mapped_sites[[col]]
+    }
+
+    result_list[[length(result_list) + 1L]] <- genomic_ranges
   }
 
   # Remove NULL entries (from skipped transcripts)
   result_list <- Filter(Negate(is.null), result_list)
+
+  if (nrow(missing_tx) > 0) {
+    miss_sum <- missing_tx[, .(n = sum(n)), by = transcript_id]
+    warning(
+      sprintf(
+        "Skipped %d site(s): %d transcript(s) not found in GTF (%s).",
+        sum(miss_sum$n),
+        nrow(miss_sum),
+        paste(head(miss_sum$transcript_id, 5), collapse = ", ")
+      )
+    )
+  }
+  if (nrow(failed_map) > 0) {
+    fail_sum <- failed_map[, .(n = sum(n)), by = transcript_id]
+    warning(
+      sprintf(
+        "Could not map %d site(s) across %d transcript(s).",
+        sum(fail_sum$n),
+        nrow(fail_sum)
+      )
+    )
+  }
 
   if (length(result_list) == 0) {
     stop(paste(
@@ -163,9 +213,6 @@ lift_m6a_to_genomic <- function(m6a_sites, gtf_file) {
 #' @param iso_switches data.table from \code{parse_isoform_switch()}.
 #'   Should include condition_1, condition_2, and dif columns for full
 #'   biological interpretation.
-#' @param sequences data.table with columns \code{isoform_id} and \code{sequence}
-#'   (used for DRACH annotation in downstream steps; validated here for
-#'   early error detection).
 #'
 #' @return data.table with columns:
 #'   \describe{
@@ -227,30 +274,28 @@ lift_m6a_to_genomic <- function(m6a_sites, gtf_file) {
 #' # PUBLICATION-QUALITY WORKFLOW
 #' m6a_sites <- parse_m6anet("m6anet_predictions.csv")
 #' iso_switches <- parse_isoform_switch("isoform_switches.txt")
-#' iso_sequences <- data.table::fread("isoform_sequences.csv")
-#'
 #' # Step 1: Lift to genomic coordinates
 #' genomic_sites <- lift_m6a_to_genomic(m6a_sites, "genome.gtf")
 #'
 #' # Step 2: Compare using genomic coordinates (scientifically valid)
 #' m6a_switches <- annotate_m6a_switches_genomic(
-#'   genomic_sites, iso_switches, iso_sequences
+#'   genomic_sites, iso_switches
 #' )
 #'
 #' # Step 3: Add functional annotation
-#' m6a_final <- annotate_drach(m6a_switches, iso_sequences)
+#' m6a_final <- annotate_drach(m6a_switches, m6a_condition_a, m6a_condition_b)
 #'
 #' # Step 4: Report results
 #' # Now your LOST/GAINED/RETAINED calls are biologically defensible
 #' }
 #'
-#' @importFrom GenomicRanges findOverlaps reduce seqnames start end strand
+#' @importFrom GenomicRanges findOverlaps seqnames start end strand
 #' @importFrom S4Vectors subjectHits mcols
 #' @import data.table
 #' @import methods
 #'
 #' @export
-annotate_m6a_switches_genomic <- function(m6a_sites_gr, iso_switches, sequences) {
+annotate_m6a_switches_genomic <- function(m6a_sites_gr, iso_switches) {
 
   if (!methods::is(m6a_sites_gr, "GRanges")) {
     stop("m6a_sites_gr must be a GRanges object from lift_m6a_to_genomic()")
@@ -264,15 +309,13 @@ annotate_m6a_switches_genomic <- function(m6a_sites_gr, iso_switches, sequences)
   if (!data.table::is.data.table(iso_switches)) {
     stop("iso_switches must be a data.table from parse_isoform_switch()")
   }
-  if (!data.table::is.data.table(sequences)) {
-    stop("sequences must be a data.table with columns: isoform_id, sequence")
-  }
 
   if (nrow(iso_switches) == 0) {
     warning("iso_switches is empty. Returning empty result.")
     return(data.table::data.table())
   }
 
+  m6a_by_tx <- split(m6a_sites_gr, m6a_sites_gr$transcript_id)
   result_list <- list()
 
   for (i in seq_len(nrow(iso_switches))) {
@@ -293,16 +336,18 @@ annotate_m6a_switches_genomic <- function(m6a_sites_gr, iso_switches, sequences)
       switch_row$dif else NA_real_
 
     # Subset GRanges by transcript_id metadata (genomic coordinates)
-    m6a_in_a_gr <- m6a_sites_gr[m6a_sites_gr$transcript_id == iso_a]
-    m6a_in_b_gr <- m6a_sites_gr[m6a_sites_gr$transcript_id == iso_b]
+    m6a_in_a_gr <- m6a_by_tx[[iso_a]]
+    m6a_in_b_gr <- m6a_by_tx[[iso_b]]
+    if (is.null(m6a_in_a_gr)) m6a_in_a_gr <- GenomicRanges::GRanges()
+    if (is.null(m6a_in_b_gr)) m6a_in_b_gr <- GenomicRanges::GRanges()
 
     if (length(m6a_in_a_gr) == 0 && length(m6a_in_b_gr) == 0) {
       next
     }
 
-    # Merge overlapping/identical ranges to get unique genomic positions
+    # Keep distinct single-base genomic loci (do not merge adjacent sites)
     all_ranges <- c(m6a_in_a_gr, m6a_in_b_gr)
-    merged     <- GenomicRanges::reduce(all_ranges, drop.empty.ranges = TRUE)
+    merged     <- unique(all_ranges)
 
     # For each unique genomic position, determine fate
     for (j in seq_len(length(merged))) {
@@ -344,12 +389,19 @@ annotate_m6a_switches_genomic <- function(m6a_sites_gr, iso_switches, sequences)
       transcript_pos <- if (!is.na(tx_pos_a)) tx_pos_a else tx_pos_b
 
       # Determine fate (genomically valid)
-      fate <- if (in_a && !in_b) {
+      fate <- if (in_a && in_b) {
+        "RETAINED"
+      } else if (in_a && !in_b) {
         "LOST"       # m6A at this genomic locus in condition_1 but not condition_2
       } else if (!in_a && in_b) {
         "GAINED"     # m6A at this genomic locus not in condition_1 but present in condition_2
       } else {
-        "RETAINED"   # m6A at this genomic locus in both conditions
+        stop(
+          sprintf(
+            "impossible state: site %s not found in either isoform %s/%s",
+            as.character(genomic_pos), iso_a, iso_b
+          )
+        )
       }
 
       result_list[[length(result_list) + 1]] <- data.table::data.table(

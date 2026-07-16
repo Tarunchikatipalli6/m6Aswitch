@@ -41,12 +41,12 @@ iso_sequences <- fread("isoform_sequences.csv")
 # Analysis 1: High-confidence (primary results)
 m6a_high <- parse_m6anet("predictions.csv", probability_threshold = 0.9)
 results_high <- annotate_m6a_switches(m6a_high, iso_switches, iso_sequences)
-results_high <- annotate_drach(results_high, iso_sequences)
+results_high <- annotate_drach(results_high, m6a_high, m6a_high)
 
 # Analysis 2: Sensitivity (supplementary)
 m6a_broad <- parse_m6anet("predictions.csv", probability_threshold = 0.5)
 results_broad <- annotate_m6a_switches(m6a_broad, iso_switches, iso_sequences)
-results_broad <- annotate_drach(results_broad, iso_sequences)
+results_broad <- annotate_drach(results_broad, m6a_broad, m6a_broad)
 
 # Export both
 export_annotated_switches(results_high, output_prefix = "m6a_HIGH")
@@ -104,7 +104,7 @@ iso_sequences <- fread("isoform_sequences.csv")
 results <- annotate_m6a_switches(m6a_sites, iso_switches, iso_sequences)
 
 # Add DRACH motif annotations
-results <- annotate_drach(results, iso_sequences)
+results <- annotate_drach(results, m6a_sites, m6a_sites)
 
 # View results
 View(results)
@@ -338,11 +338,11 @@ genomic_sites <- lift_m6a_to_genomic(m6a_sites, gtf_file = "genome.gtf")
 
 # 3. Annotate switches using genomic coordinates
 m6a_annotated <- annotate_m6a_switches_genomic(
-  genomic_sites, iso_switches, iso_sequences
+  genomic_sites, iso_switches
 )
 
-# 4. Optional: add DRACH motif annotation (uses transcript sequences)
-m6a_annotated_drach <- annotate_drach(m6a_annotated, iso_sequences)
+# 4. Optional: add DRACH motif annotation (uses kmer from m6Anet outputs)
+m6a_annotated_drach <- annotate_drach(m6a_annotated, m6a_sites, m6a_sites)
 
 # 5. Visualize
 plot_m6a_switches(m6a_annotated, plot_type = "summary")

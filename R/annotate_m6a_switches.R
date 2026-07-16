@@ -52,6 +52,8 @@ annotate_drach <- function(m6a_switches, m6a_condition_a, m6a_condition_b) {
     stop("m6a_condition_b must be a data.table from parse_m6anet()")
   }
 
+  m6a_switches <- data.table::copy(m6a_switches)
+
   # Handle empty input
   if (nrow(m6a_switches) == 0) {
     m6a_switches[, drach_motif := logical(0)]
@@ -85,14 +87,17 @@ annotate_drach <- function(m6a_switches, m6a_condition_a, m6a_condition_b) {
   m6a_switches[, lookup_transcript := data.table::fifelse(
     m6a_fate == "GAINED", isoform_b, isoform_a
   )]
+  m6a_switches[, .row_id := .I]
 
   m6a_switches <- merge(
     m6a_switches,
     kmer_map[, .(transcript_id, position, kmer)],
     by.x = c("lookup_transcript", pos_col),
     by.y = c("transcript_id", "position"),
-    all.x = TRUE
+    all.x = TRUE,
+    sort = FALSE
   )
+  data.table::setorder(m6a_switches, .row_id)
 
   # Check DRACH pattern on kmer
   # Convert T to U (DNA to RNA) and check [AGU][AG]AC[ACU]
@@ -100,7 +105,7 @@ annotate_drach <- function(m6a_switches, m6a_condition_a, m6a_condition_b) {
     !is.na(kmer),
     grepl(
       "^[AGU][AG]AC[ACU]$",
-      toupper(chartr("T", "U", kmer))
+      chartr("T", "U", toupper(kmer))
     ),
     NA
   )]
@@ -108,6 +113,7 @@ annotate_drach <- function(m6a_switches, m6a_condition_a, m6a_condition_b) {
   # Clean up temporary columns
   m6a_switches[, lookup_transcript := NULL]
   m6a_switches[, kmer := NULL]
+  m6a_switches[, .row_id := NULL]
 
   return(m6a_switches)
 }

@@ -16,7 +16,26 @@ test_that("parse_m6anet handles basic input", {
   expect_equal(nrow(result), 3)
   expect_true(all(c("transcript_id", "position", "probability") %in% names(result)))
   expect_true(all(result$probability >= 0.5))
+  expect_type(result$position, "integer")
   
+  unlink(temp_file)
+})
+
+test_that("parse_m6anet reports missing required columns before filtering", {
+  test_data <- data.table::data.table(
+    transcript = "ENST001",
+    pos = 100,
+    prob = 0.95
+  )
+
+  temp_file <- tempfile(fileext = ".csv")
+  data.table::fwrite(test_data, temp_file)
+
+  expect_error(
+    parse_m6anet(temp_file),
+    "must contain columns"
+  )
+
   unlink(temp_file)
 })
 

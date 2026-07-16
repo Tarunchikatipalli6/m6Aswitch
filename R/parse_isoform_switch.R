@@ -59,16 +59,20 @@ parse_isoform_switch <- function(iso_switch_file,
                        old = c(cond_a_col, cond_b_col, dif_col),
                        new = c("condition_1", "condition_2", "dif"),
                        skip_absent = TRUE)
-  
-  # Filter by FDR
-  iso_data <- iso_data[fdr <= fdr_threshold]
-  
+
   # Ensure required columns
   required_cols <- c("gene_id", "isoform_a", "isoform_b", "fdr")
   if (!all(required_cols %in% names(iso_data))) {
     stop("IsoformSwitchAnalyzeR output must contain columns: ",
          paste(required_cols, collapse = ", "))
   }
+
+  # Filter by FDR
+  na_fdr_rows <- iso_data[is.na(fdr), .N]
+  if (na_fdr_rows > 0) {
+    message("Dropping ", na_fdr_rows, " row(s) with NA FDR.")
+  }
+  iso_data <- iso_data[!is.na(fdr) & fdr <= fdr_threshold]
   
   # Ensure condition columns exist (add NA if missing)
   if (!"condition_1" %in% names(iso_data)) {

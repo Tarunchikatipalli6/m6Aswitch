@@ -229,20 +229,23 @@ plot_m6aswitch_results <- function(classified,
       data.table::setnames(sp, "isoform_switch_q_value", "fdr")
     }
 
-    merge_cols <- intersect(c("gene_id", "dif", "fdr"), names(sp))
-    volcano_dt <- merge(
-      dt,
-      sp[, ..merge_cols],
-      by    = "gene_id",
-      all.x = TRUE
-    )
-
-    # Resolve duplicate column names after merge (e.g. fdr.x / fdr.y)
-    if ("dif.y" %in% names(volcano_dt)) {
-      data.table::setnames(volcano_dt, "dif.y", "dif",  skip_absent = TRUE)
+    volcano_dt <- data.table::copy(dt)
+    if (!"dif" %in% names(volcano_dt)) {
+      merge_cols <- intersect(c("gene_id", "dif"), names(sp))
+      if (all(c("gene_id", "dif") %in% merge_cols)) {
+        dif_lookup <- unique(sp[, ..merge_cols], by = "gene_id")
+        volcano_dt <- merge(
+          volcano_dt,
+          dif_lookup,
+          by = "gene_id",
+          all.x = TRUE,
+          sort = FALSE
+        )
+      }
     }
 
-    volcano_dt[, delta_prob := probability_b - probability_a]
+    volcano_dt[, delta_prob := data.table::fcoalesce(probability_b, 0) -
+                             data.table::fcoalesce(probability_a, 0)]
 
     plot_data <- volcano_dt[!is.na(delta_prob) & !is.na(dif)]
 
@@ -266,7 +269,7 @@ plot_m6aswitch_results <- function(classified,
                            "\u2014 Isoform Switch Magnitude vs m6A Change"),
           subtitle = paste0(
             "X: how much isoform usage changes between conditions | ",
-            "Y: how much m6A probability changes"
+            "Y: how much m6A probability changes (not detected treated as 0)"
           ),
           x        = "dIF (isoform fraction difference, tumor \u2212 normal)",
           y        = expression(Delta * " m6A probability (isoform B \u2212 isoform A)"),
@@ -294,8 +297,10 @@ plot_m6aswitch_results <- function(classified,
     gene_dt <- dt[gene_id == gene]
     if (nrow(gene_dt) == 0) next
 
-    # Determine x variable: prefer transcript_position (genomic workflow)
-    x_col <- if ("transcript_position" %in% names(gene_dt)) {
+    # Determine x variable: prefer genomic coordinate for comparable isoform tracks
+    x_col <- if ("start" %in% names(gene_dt)) {
+      "start"
+    } else if ("transcript_position" %in% names(gene_dt)) {
       "transcript_position"
     } else if ("position" %in% names(gene_dt)) {
       "position"
@@ -356,14 +361,9 @@ plot_m6aswitch_results <- function(classified,
     ) +
       # Backbone representing the isoform (grey bar)
       ggplot2::geom_segment(
-        ggplot2::aes(x = x_min, xend = x_max, yend = side),
+        ggplot2::aes(x = x_min, xend = x_max, y = side, yend = side),
         color = "grey80", linewidth = 3, inherit.aes = FALSE,
         data = unique(long_dt[, .(side)])
-      ) +
-      # m6A site lollipop sticks
-      ggplot2::geom_segment(
-        ggplot2::aes(xend = position, yend = as.numeric(factor(side)) + 0.35),
-        linewidth = 0.4, alpha = 0.6
       ) +
       # m6A site points
       ggplot2::geom_point(size = 4, alpha = 0.95) +
@@ -376,7 +376,7 @@ plot_m6aswitch_results <- function(classified,
       ggplot2::labs(
         title    = paste0(gene, " \u2014 m6A Sites on Switching Isoforms"),
         subtitle = subtitle_text,
-        x        = if (x_col == "transcript_position") "Transcript position (nt)" else "Position",
+        x        = if (x_col == "start") "Genomic coordinate" else if (x_col == "transcript_position") "Transcript position (nt)" else "Position",
         y        = "",
         color    = "m6A Fate"
       ) +
@@ -415,7 +415,7 @@ plot_m6aswitch_results <- function(classified,
 #' Plot m6A Switching Events (legacy dispatcher)
 #'
 #' @description
-#' \lifecycle{superseded}
+#' Superseded.
 #'
 #' This function is superseded by \code{\link{plot_m6aswitch_results}()}, which
 #' generates all five publication plots in one call and saves them to disk.
@@ -502,7 +502,8 @@ plot_m6a_switches <- function(m6a_switches,
   }
 
   if (plot_type == "delta_prob") {
-    dt[, delta_prob := probability_b - probability_a]
+    dt[, delta_prob := data.table::fcoalesce(probability_b, 0) -
+                        data.table::fcoalesce(probability_a, 0)]
 
     p <- ggplot2::ggplot(
       dt[!is.na(delta_prob)],
@@ -514,6 +515,7 @@ plot_m6a_switches <- function(m6a_switches,
       ggplot2::scale_fill_manual(values = fate_colors, drop = FALSE) +
       ggplot2::labs(
         title = "Change in m6A Probability Across Switches",
+        subtitle = "Not-detected sites are treated as probability 0 for delta calculations",
         x = "m6A fate",
         y = expression(Delta * " probability (isoform B - isoform A)"),
         fill = "Fate"
@@ -529,7 +531,7 @@ plot_m6a_switches <- function(m6a_switches,
 #'
 #' Creates a lollipop/track-style plot showing m6A sites on both switching
 #' isoforms for one gene. Points are coloured by m6A fate (LOST / GAINED /
-#' RETAINED) and positioned by transcript coordinate.
+#' RETAINED) and positioned by genomic coordinate when available.
 #'
 #' @param gene_id Character. Gene name or ID to plot.
 #' @param m6a_switches data.table from \code{annotate_m6a_switches_genomic()}.
@@ -555,7 +557,8 @@ plot_isoform_details <- function(gene_id,
   }
 
   # Avoid data.table NSE conflict with function argument name
-  gene_data <- m6a_switches[get("gene_id") == gene_id]
+  .gene <- gene_id
+  gene_data <- m6a_switches[gene_id == .gene]
 
   if (nrow(gene_data) == 0) {
     stop(sprintf("No data for gene: %s", gene_id))
@@ -563,8 +566,10 @@ plot_isoform_details <- function(gene_id,
 
   fate_colors <- c(LOST = "#D55E00", GAINED = "#009E73", RETAINED = "#0072B2")
 
-  # Determine position column: prefer transcript_position (genomic workflow)
-  x_col <- if ("transcript_position" %in% names(gene_data)) {
+  # Determine position column: prefer genomic coordinate for cross-isoform comparison
+  x_col <- if ("start" %in% names(gene_data)) {
+    "start"
+  } else if ("transcript_position" %in% names(gene_data)) {
     "transcript_position"
   } else {
     "position"
@@ -605,7 +610,7 @@ plot_isoform_details <- function(gene_id,
     )]
     x_lab <- "Relative position within isoform (0 = 5', 1 = 3')"
   } else {
-    x_lab <- if (x_col == "transcript_position") "Transcript position (nt)" else "Position"
+    x_lab <- if (x_col == "start") "Genomic coordinate" else if (x_col == "transcript_position") "Transcript position (nt)" else "Position"
   }
 
   subtitle_text <- sprintf("Switch: Astrocyte \u2192 Tumor")
@@ -614,7 +619,7 @@ plot_isoform_details <- function(gene_id,
     if ("geneID"                %in% names(sp)) data.table::setnames(sp, "geneID",                "gene_id", skip_absent = TRUE)
     if ("dIF"                   %in% names(sp)) data.table::setnames(sp, "dIF",                   "dif",     skip_absent = TRUE)
     if ("isoform_switch_q_value"%in% names(sp)) data.table::setnames(sp, "isoform_switch_q_value","fdr",     skip_absent = TRUE)
-    row <- sp[gene_id == get("gene_id")]
+    row <- sp[gene_id == .gene]
     if (nrow(row) > 0) {
       subtitle_text <- sprintf(
         "dIF = %.2f | FDR = %.2e | Switch: Astrocyte \u2192 Tumor",

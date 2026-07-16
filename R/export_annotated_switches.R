@@ -34,15 +34,15 @@ export_annotated_switches <- function(m6a_switches,
     message("Wrote CSV: ", csv_file)
   }
 
-  if (format %in% c("bed", "both") && add_igv_track) {
+  if (format %in% c("bed", "both")) {
     bed_file <- sprintf("%s.bed", output_prefix)
 
-    has_genomic <- "start" %in% names(m6a_switches)
+    has_genomic <- all(c("seqname", "start", "strand") %in% names(m6a_switches))
 
     if (has_genomic) {
       chrom_col  <- m6a_switches$seqname
       start_col  <- m6a_switches$start - 1L
-      end_col    <- m6a_switches$start
+      end_col    <- if ("end" %in% names(m6a_switches)) m6a_switches$end else m6a_switches$start
       strand_col <- m6a_switches$strand
     } else {
       chrom_col  <- m6a_switches$gene_id
@@ -64,18 +64,22 @@ export_annotated_switches <- function(m6a_switches,
       name       = m6a_switches$m6a_fate,
       score      = round(prob_score * 100, 0),
       strand     = strand_col,
-      itemRGB    = ifelse(m6a_switches$m6a_fate == "LOST",   "255,0,0",
+      thickStart = start_col,
+      thickEnd   = end_col,
+      itemRgb    = ifelse(m6a_switches$m6a_fate == "LOST",   "255,0,0",
                    ifelse(m6a_switches$m6a_fate == "GAINED", "0,255,0", "0,0,255"))
     )
 
     data.table::setorder(bed_data, chrom, chromStart)
 
     con <- file(bed_file, "w")
-    writeLines("# m6A switches - color: LOST=red, GAINED=green, RETAINED=blue", con)
+    if (isTRUE(add_igv_track)) {
+      writeLines('track name="m6A switches" itemRgb="On"', con)
+    }
     close(con)
 
     data.table::fwrite(bed_data, file = bed_file, sep = "\t",
-                       col.names = TRUE, append = TRUE)
+                       col.names = FALSE, append = TRUE)
     output_files$bed <- bed_file
     message("Wrote BED: ", bed_file)
   }
@@ -121,7 +125,7 @@ generate_summary_report <- function(m6a_switches, output_file = "m6aswitch_repor
     ""
   )
 
-  top_genes <- m6a_switches[, .N, by = gene_id][order(-N)][1:min(10, nrow(m6a_switches))]
+  top_genes <- head(m6a_switches[, .N, by = gene_id][order(-N)], 10L)
   for (i in seq_len(nrow(top_genes))) {
     report <- c(report, sprintf("  %s: %d m6A events",
                                 top_genes[i, gene_id], top_genes[i, N]))

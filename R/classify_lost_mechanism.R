@@ -1,5 +1,7 @@
 #' Classify the Mechanism Behind LOST m6A Sites
 #'
+#' @md
+#'
 #' For every LOST call in an annotated m6A switches table, determines whether the
 #' site was lost because:
 #' \itemize{
@@ -71,7 +73,7 @@
 #' @examples
 #' \dontrun{
 #' # After the standard publication workflow:
-#' m6a_final <- annotate_drach(m6a_switches, iso_sequences)
+#' m6a_final <- annotate_drach(m6a_switches, m6a_condition_a, m6a_condition_b)
 #'
 #' # Classify why each LOST/GAINED site changed:
 #' m6a_classified <- classify_lost_mechanism(m6a_final, "genome.gtf")
@@ -89,7 +91,6 @@
 #' @importFrom GenomicFeatures exonsBy
 #' @importFrom GenomicRanges GRanges findOverlaps
 #' @importFrom IRanges IRanges
-#' @importFrom S4Vectors subjectHits
 #' @import data.table
 #' @import methods
 #'
@@ -131,73 +132,65 @@ classify_lost_mechanism <- function(m6a_switches, gtf_file) {
   m6a_switches[, lost_mechanism    := NA_character_]
   m6a_switches[, isoform_b_has_exon := NA]
 
-  # ── Internal helper: does a genomic point fall in a transcript's exons? ──────
-  .site_in_exons <- function(chrom, site_start, site_end, isoform_id) {
+  # ── Vectorised classification by unique site/transcript target ───────────────
+  classify_idx <- which(m6a_switches$m6a_fate %in% c("LOST", "GAINED"))
 
-    tx_exons <- all_exons[names(all_exons) == isoform_id]
-    if (length(tx_exons) == 0) {
-      # Isoform not found in GTF — cannot determine; treat as absent
-      return(NA)
-    }
+  if (length(classify_idx) > 0) {
+    classify_dt <- m6a_switches[classify_idx, .(
+      row_id = .I,
+      seqname,
+      start,
+      end,
+      m6a_fate,
+      target_isoform = data.table::fifelse(m6a_fate == "LOST", isoform_b, isoform_a)
+    )]
 
-    # Flatten the GRangesList entry to a plain GRanges
-    exon_gr <- tx_exons[[1]]
+    unique_targets <- unique(classify_dt$target_isoform)
+    isoform_missing <- setdiff(unique_targets, names(all_exons))
 
-    site_gr <- GenomicRanges::GRanges(
-      seqnames = chrom,
-      ranges   = IRanges::IRanges(start = site_start, end = site_end)
-    )
+    classify_dt[, has_exon := NA]
+    present_targets <- intersect(unique_targets, names(all_exons))
 
-    hits <- GenomicRanges::findOverlaps(site_gr, exon_gr, type = "any")
-    return(length(hits) > 0)
-  }
-
-  # ── Row-by-row classification ────────────────────────────────────────────────
-  for (i in seq_len(nrow(m6a_switches))) {
-
-    fate <- m6a_switches[i, m6a_fate]
-
-    if (fate == "RETAINED") next   # Nothing to classify
-
-    chrom      <- m6a_switches[i, seqname]
-    site_start <- m6a_switches[i, start]
-    site_end   <- m6a_switches[i, end]
-
-    if (fate == "LOST") {
-      # m6A present in isoform A, absent in isoform B
-      # → ask: does isoform B even have this exon?
-      check_isoform <- m6a_switches[i, isoform_b]
-      has_exon      <- .site_in_exons(chrom, site_start, site_end, check_isoform)
-
-      m6a_switches[i, isoform_b_has_exon := has_exon]
-
-      if (is.na(has_exon)) {
-        # GTF lookup failed — leave mechanism as NA
-        next
+    for (iso in present_targets) {
+      idx <- which(classify_dt$target_isoform == iso)
+      site_gr <- GenomicRanges::GRanges(
+        seqnames = classify_dt$seqname[idx],
+        ranges = IRanges::IRanges(start = classify_dt$start[idx], end = classify_dt$end[idx])
+      )
+      hits <- GenomicRanges::findOverlaps(site_gr, all_exons[[iso]], type = "any")
+      has_exon <- rep(FALSE, length(idx))
+      if (length(hits) > 0) {
+        has_exon[unique(S4Vectors::queryHits(hits))] <- TRUE
       }
-
-      m6a_switches[i, lost_mechanism := ifelse(
-        has_exon,
-        "LOST_UNMETHYLATED",    # Exon present, site just not methylated
-        "LOST_EXON_SKIPPED"     # Exon absent — structural explanation
-      )]
-
-    } else if (fate == "GAINED") {
-      # m6A absent in isoform A, present in isoform B
-      # → ask: does isoform A even have this exon?
-      check_isoform <- m6a_switches[i, isoform_a]
-      has_exon      <- .site_in_exons(chrom, site_start, site_end, check_isoform)
-
-      m6a_switches[i, isoform_b_has_exon := has_exon]
-
-      if (is.na(has_exon)) next
-
-      m6a_switches[i, lost_mechanism := ifelse(
-        has_exon,
-        "GAINED_NEW_METHYLATION",  # Exon present in A but unmethylated there
-        "GAINED_EXON_INCLUDED"     # New exon in B that carries the m6A site
-      )]
+      classify_dt$has_exon[idx] <- has_exon
     }
+
+    if (length(isoform_missing) > 0) {
+      warning(
+        sprintf(
+          "Could not find %d target isoform(s) in GTF while classifying mechanisms.",
+          length(isoform_missing)
+        )
+      )
+    }
+
+    m6a_switches[classify_dt$row_id, isoform_b_has_exon := classify_dt$has_exon]
+    m6a_switches[
+      classify_dt$row_id[classify_dt$m6a_fate == "LOST" & !is.na(classify_dt$has_exon)],
+      lost_mechanism := ifelse(
+        classify_dt$has_exon[classify_dt$m6a_fate == "LOST" & !is.na(classify_dt$has_exon)],
+        "LOST_UNMETHYLATED",
+        "LOST_EXON_SKIPPED"
+      )
+    ]
+    m6a_switches[
+      classify_dt$row_id[classify_dt$m6a_fate == "GAINED" & !is.na(classify_dt$has_exon)],
+      lost_mechanism := ifelse(
+        classify_dt$has_exon[classify_dt$m6a_fate == "GAINED" & !is.na(classify_dt$has_exon)],
+        "GAINED_NEW_METHYLATION",
+        "GAINED_EXON_INCLUDED"
+      )
+    ]
   }
 
   # ── Summary message ──────────────────────────────────────────────────────────

@@ -137,7 +137,7 @@ classify_lost_mechanism <- function(m6a_switches, gtf_file) {
 
   if (length(classify_idx) > 0) {
     classify_dt <- m6a_switches[classify_idx, .(
-      row_id = .I,
+      row_id = classify_idx,
       seqname,
       start,
       end,
@@ -193,7 +193,7 @@ classify_lost_mechanism <- function(m6a_switches, gtf_file) {
     ]
   }
 
-  # ── Summary message ──────────────────────────────────────────────────────────
+  # ── Summary message ─────────────────────────────────────────────────────────
   n_lost_skip  <- sum(m6a_switches$lost_mechanism == "LOST_EXON_SKIPPED",  na.rm = TRUE)
   n_lost_unmeth <- sum(m6a_switches$lost_mechanism == "LOST_UNMETHYLATED",  na.rm = TRUE)
   n_gained_exon <- sum(m6a_switches$lost_mechanism == "GAINED_EXON_INCLUDED", na.rm = TRUE)

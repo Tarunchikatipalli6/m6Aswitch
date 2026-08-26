@@ -73,10 +73,12 @@ plot_m6aswitch_results <- function(classified,
 
   dt <- data.table::copy(classified)
 
-  fate_levels <- c("LOST", "GAINED", "RETAINED")
-  fate_colors <- c(LOST = "#D55E00", GAINED = "#009E73", RETAINED = "#0072B2")
+  fate_levels <- c("ISOFORM_A_ONLY", "ISOFORM_B_ONLY", "IN_BOTH_ISOFORMS")
+  fate_colors <- c(ISOFORM_A_ONLY   = "#D55E00",
+                   ISOFORM_B_ONLY   = "#009E73",
+                   IN_BOTH_ISOFORMS = "#0072B2")
 
-  dt[, m6a_fate := factor(m6a_fate, levels = fate_levels)]
+  dt[, isoform_status := factor(isoform_status, levels = fate_levels)]
 
   base_theme <- ggplot2::theme_minimal(base_size = 13) +
     ggplot2::theme(
@@ -124,19 +126,19 @@ plot_m6aswitch_results <- function(classified,
   # ── Plot 2: LOST Mechanism Breakdown ──────────────────────────────────────
   message("Plot 2: LOST mechanism breakdown...")
 
-  lost_dt <- dt[m6a_fate == "LOST" & !is.na(lost_mechanism)]
+  lost_dt <- dt[isoform_status == "ISOFORM_A_ONLY" & !is.na(isoform_mechanism)]
 
   if (nrow(lost_dt) == 0) {
     message("  WARNING: No LOST sites with mechanism assigned — skipping Plot 2.")
     message("  Run classify_lost_mechanism() first.")
   } else {
-    mech_counts <- lost_dt[, .N, by = lost_mechanism][order(-N)]
-    mech_counts[, pct         := 100 * N / sum(N)]
-    mech_counts[, lost_mechanism := factor(lost_mechanism, levels = lost_mechanism)]
+    mech_counts <- lost_dt[, .N, by = isoform_mechanism][order(-N)]
+    mech_counts[, pct := 100 * N / sum(N)]
+    mech_counts[, isoform_mechanism := factor(isoform_mechanism, levels = isoform_mechanism)]
 
     mech_colors <- c(
-      LOST_EXON_SKIPPED = "#E69F00",
-      LOST_UNMETHYLATED = "#CC79A7"
+      A_ONLY_EXON_SKIPPED = "#E69F00",
+      A_ONLY_UNMETHYLATED = "#CC79A7"
     )
 
     p2 <- ggplot2::ggplot(

@@ -120,6 +120,8 @@ lift_m6a_to_genomic <- function(m6a_sites, gtf_file) {
     genomic_ranges <- tryCatch(
       GenomicFeatures::mapFromTranscripts(tx_query, tx_range),
       error = function(e) {
+        warning("mapFromTranscripts failed for ", tx_id, ": ", conditionMessage(e),
+            call. = FALSE)
         failed_map <<- rbind(
           failed_map,
           data.table::data.table(transcript_id = tx_id, n = nrow(tx_sites_valid))

@@ -102,7 +102,7 @@ classify_lost_mechanism <- function(m6a_switches, gtf_file) {
     stop("m6a_switches must be a data.table from annotate_m6a_switches_genomic()")
   }
 
-  required_cols <- c("seqname", "start", "end", "isoform_a", "isoform_b", "m6a_fate")
+  required_cols <- c("seqname", "start", "end", "isoform_a", "isoform_b", "isoform_status")
   missing_cols  <- setdiff(required_cols, names(m6a_switches))
   if (length(missing_cols) > 0) {
     stop(
@@ -117,8 +117,8 @@ classify_lost_mechanism <- function(m6a_switches, gtf_file) {
   }
 
   if (nrow(m6a_switches) == 0) {
-    m6a_switches[, lost_mechanism   := character(0)]
-    m6a_switches[, isoform_b_has_exon := logical(0)]
+    m6a_switches[, isoform_mechanism        := character(0)]
+    m6a_switches[, target_isoform_has_exon  := logical(0)]
     return(m6a_switches)
   }
 
@@ -129,21 +129,23 @@ classify_lost_mechanism <- function(m6a_switches, gtf_file) {
   message("Exon database ready.")
 
   # ── Initialise output columns ────────────────────────────────────────────────
-  m6a_switches[, lost_mechanism    := NA_character_]
-  m6a_switches[, isoform_b_has_exon := NA]
+  m6a_switches[, isoform_mechanism       := NA_character_]
+  m6a_switches[, target_isoform_has_exon := NA]
 
   # ── Vectorised classification by unique site/transcript target ───────────────
-  classify_idx <- which(m6a_switches$m6a_fate %in% c("LOST", "GAINED"))
+  classify_idx <- which(m6a_switches$isoform_status %in%
+                        c("ISOFORM_A_ONLY", "ISOFORM_B_ONLY"))
 
   if (length(classify_idx) > 0) {
     classify_dt <- m6a_switches[classify_idx, .(
-      row_id = classify_idx,
       seqname,
       start,
       end,
-      m6a_fate,
-      target_isoform = data.table::fifelse(m6a_fate == "LOST", isoform_b, isoform_a)
+      isoform_status,
+      target_isoform = data.table::fifelse(isoform_status == "ISOFORM_A_ONLY",
+                                           isoform_b, isoform_a)
     )]
+    classify_dt[, row_id := classify_idx]
 
     unique_targets <- unique(classify_dt$target_isoform)
     isoform_missing <- setdiff(unique_targets, names(all_exons))
@@ -174,34 +176,44 @@ classify_lost_mechanism <- function(m6a_switches, gtf_file) {
       )
     }
 
-    m6a_switches[classify_dt$row_id, isoform_b_has_exon := classify_dt$has_exon]
+    m6a_switches[classify_dt$row_id, target_isoform_has_exon := classify_dt$has_exon]
+
+    sel_a <- classify_dt$isoform_status == "ISOFORM_A_ONLY" & !is.na(classify_dt$has_exon)
     m6a_switches[
-      classify_dt$row_id[classify_dt$m6a_fate == "LOST" & !is.na(classify_dt$has_exon)],
-      lost_mechanism := ifelse(
-        classify_dt$has_exon[classify_dt$m6a_fate == "LOST" & !is.na(classify_dt$has_exon)],
-        "LOST_UNMETHYLATED",
-        "LOST_EXON_SKIPPED"
+      classify_dt$row_id[sel_a],
+      isoform_mechanism := ifelse(
+        classify_dt$has_exon[sel_a],
+        "A_ONLY_UNMETHYLATED",
+        "A_ONLY_EXON_SKIPPED"
       )
     ]
+
+    sel_b <- classify_dt$isoform_status == "ISOFORM_B_ONLY" & !is.na(classify_dt$has_exon)
     m6a_switches[
-      classify_dt$row_id[classify_dt$m6a_fate == "GAINED" & !is.na(classify_dt$has_exon)],
-      lost_mechanism := ifelse(
-        classify_dt$has_exon[classify_dt$m6a_fate == "GAINED" & !is.na(classify_dt$has_exon)],
-        "GAINED_NEW_METHYLATION",
-        "GAINED_EXON_INCLUDED"
+      classify_dt$row_id[sel_b],
+      isoform_mechanism := ifelse(
+        classify_dt$has_exon[sel_b],
+        "B_ONLY_NEW_METHYLATION",
+        "B_ONLY_EXON_INCLUDED"
       )
     ]
   }
 
   # ── Summary message ─────────────────────────────────────────────────────────
-  n_lost_skip  <- sum(m6a_switches$lost_mechanism == "LOST_EXON_SKIPPED",  na.rm = TRUE)
-  n_lost_unmeth <- sum(m6a_switches$lost_mechanism == "LOST_UNMETHYLATED",  na.rm = TRUE)
-  n_gained_exon <- sum(m6a_switches$lost_mechanism == "GAINED_EXON_INCLUDED", na.rm = TRUE)
-  n_gained_new  <- sum(m6a_switches$lost_mechanism == "GAINED_NEW_METHYLATION", na.rm = TRUE)
+  n_a_skip  <- sum(m6a_switches$isoform_mechanism == "A_ONLY_EXON_SKIPPED",    na.rm = TRUE)
+  n_a_unmet <- sum(m6a_switches$isoform_mechanism == "A_ONLY_UNMETHYLATED",    na.rm = TRUE)
+  n_b_incl  <- sum(m6a_switches$isoform_mechanism == "B_ONLY_EXON_INCLUDED",   na.rm = TRUE)
+  n_b_new   <- sum(m6a_switches$isoform_mechanism == "B_ONLY_NEW_METHYLATION", na.rm = TRUE)
 
   message(sprintf(
-    "Classification complete:\n  LOST_EXON_SKIPPED: %d\n  LOST_UNMETHYLATED: %d\n  GAINED_EXON_INCLUDED: %d\n  GAINED_NEW_METHYLATION: %d",
-    n_lost_skip, n_lost_unmeth, n_gained_exon, n_gained_new
+    paste0("Classification complete:\n",
+           "  Structural (splicing explains the difference):\n",
+           "    A_ONLY_EXON_SKIPPED    : %d\n",
+           "    B_ONLY_EXON_INCLUDED   : %d\n",
+           "  Regulatory (position present in both isoforms):\n",
+           "    A_ONLY_UNMETHYLATED    : %d\n",
+           "    B_ONLY_NEW_METHYLATION : %d"),
+    n_a_skip, n_b_incl, n_a_unmet, n_b_new
   ))
 
   return(m6a_switches)

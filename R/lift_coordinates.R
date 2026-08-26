@@ -89,7 +89,7 @@ lift_m6a_to_genomic <- function(m6a_sites, gtf_file) {
 
   for (tx_id in names(sites_by_tx)) {
     tx_sites <- sites_by_tx[[tx_id]]
-    tx_range <- all_exons[[tx_id]]
+    tx_range <- all_exons[tx_id]
 
     if (is.null(tx_range) || length(tx_range) == 0) {
       missing_tx <- rbind(

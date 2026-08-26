@@ -1,0 +1,1529 @@
+---
+title: "m6Aswitch: Integrating m6A Modifications with Isoform Switching"
+author: "Tarun Chikatipalli"
+date: "`r Sys.Date()`"
+output:
+  rmarkdown::html_vignette:
+    toc: true
+    toc_depth: 3
+    number_sections: false
+vignette: >
+  %\VignetteIndexEntry{m6Aswitch: Integrating m6A Modifications with Isoform Switching}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment  = "#>",
+  warning  = FALSE,
+  message  = FALSE
+)
+```
+
+# Abstract
+
+Alternative splicing determines which isoform of a gene is expressed.
+N6-methyladenosine (m6A) is a reversible RNA modification that regulates
+transcript stability, translation and localisation. Nanopore direct RNA
+sequencing can measure both in the same experiment: full-length isoforms are
+resolved by tools such as IsoformSwitchAnalyzeR, and m6A sites are called at
+single-base resolution by tools such as m6Anet.
+
+Integrating the two is not straightforward. m6Anet reports positions in
+**transcript** coordinates, so the same position number in two isoforms of a
+gene refers to unrelated locations in the genome. Any comparison across isoforms
+must therefore be made in genomic space, taking exon structure into account.
+
+**m6Aswitch** performs that integration. It converts m6A sites to genomic
+coordinates using a GTF, compares them at matched loci across the two isoforms
+of a switch, and separately compares them between experimental conditions. It
+then determines whether each difference is explained by splicing (the sequence
+is absent from one isoform) or by methylation state (the sequence is present in
+both, but modified in only one). Results can be exported for genome browsers and
+visualised as publication figures.
+
+In summary, m6Aswitch converts two independent analyses into one interpretable
+answer: **what happens to m6A when a gene switches isoforms, and does that
+differ between conditions?**
+
+---
+
+# Table of Contents
+
+**Preliminaries**
+
+- [Background and Package Description](#background)
+- [Installation](#installation)
+- [How To Get Help](#help)
+- [What To Cite](#cite)
+
+**Quick Start**
+
+- [Overview of the Workflow](#overview)
+- [Example Workflow](#example-workflow)
+
+**Core Concepts**
+
+- [Why Genomic Coordinates Are Required](#why-genomic)
+- [The Two Classifications](#two-classifications)
+- [Which Isoform Is A?](#which-isoform)
+- [Detection Versus Absence](#detection-absence)
+
+**Detailed Workflow**
+
+- [Step 1: Parsing m6Anet Output](#step1)
+- [Step 2: Building a Testability Filter](#step2)
+- [Step 3: Parsing Isoform Switches](#step3)
+- [Step 4: Tagging Conditions](#step4)
+- [Step 5: Lifting to Genomic Coordinates](#step5)
+- [Step 6: Annotating Switches](#step6)
+- [Step 7: DRACH Motif Annotation](#step7)
+- [Step 8: Classifying the Mechanism](#step8)
+- [Step 9: Export and Reporting](#step9)
+- [Step 10: Visualisation](#step10)
+
+**Interpreting Results**
+
+- [Reading the Output Table](#reading-output)
+- [A Worked Interpretation](#worked-interpretation)
+- [Threshold Selection](#thresholds)
+- [Isoform Length as a Confounder](#length-confounder)
+
+**Preparing Inputs**
+
+- [Building Switch Pairs from IsoformSwitchAnalyzeR](#building-pairs)
+- [Choosing a GTF](#choosing-gtf)
+
+**Validation**
+
+- [Coordinate Handling](#validation-coords)
+- [Classification Logic](#validation-logic)
+
+**Frequently Asked Questions**
+
+- [FAQ](#faq)
+
+**Final Remarks**
+
+- [Session Information](#session)
+
+---
+
+# Preliminaries
+
+## Background and Package Description {#background}
+
+Two mature analyses exist for nanopore direct RNA sequencing data.
+
+**Isoform switching.** IsoformSwitchAnalyzeR identifies genes where the
+proportion of expression coming from each isoform changes between conditions.
+For each such gene it reports a pair of isoforms — one used more in condition 1,
+one used more in condition 2 — along with an FDR and an effect size (dIF).
+
+**m6A detection.** m6Anet identifies methylated adenosines from the raw nanopore
+signal, reporting a transcript, a position, a modification probability, and the
+5-mer sequence context.
+
+Each analysis is informative alone. Together they can answer a question neither
+addresses: when a gene changes which isoform it uses, what happens to the m6A
+sites that isoform carried?
+
+Answering it requires care, for three reasons.
+
+**Coordinate systems differ between isoforms.** Position 150 of one transcript
+and position 150 of another are unrelated genomic locations. Direct comparison
+of transcript positions produces meaningless calls.
+
+**Two different questions get conflated.** "This site is on isoform B but not
+isoform A" is a statement about transcript structure. "This site was detected in
+the mutant but not the wild type" is a statement about methylation. A site can
+satisfy the first while failing the second, and vice versa.
+
+**Absence is ambiguous.** m6Anet reports a position only where read coverage is
+sufficient. A position missing from one condition's output may be unmethylated,
+or may simply never have been evaluated.
+
+m6Aswitch addresses all three: it lifts coordinates through exon structure,
+reports the structural and regulatory classifications in separate columns, and
+provides a documented pattern for restricting analysis to positions where
+absence is meaningful.
+
+[Back to Table of Contents](#table-of-contents)
+
+## Installation {#installation}
+
+m6Aswitch depends on several Bioconductor packages. If you have not used
+Bioconductor before:
+
+```r
+if (!requireNamespace("BiocManager", quietly = TRUE)) {
+  install.packages("BiocManager")
+}
+BiocManager::install(c(
+  "GenomicRanges", "GenomicFeatures", "txdbmaker",
+  "IRanges", "S4Vectors", "Biostrings"
+))
+```
+
+Then install m6Aswitch from GitHub:
+
+```r
+if (!requireNamespace("devtools", quietly = TRUE)) {
+  install.packages("devtools")
+}
+devtools::install_github("Tarunchikatipalli6/m6Aswitch")
+```
+
+```{r setup}
+library(m6Aswitch)
+library(data.table)
+```
+
+[Back to Table of Contents](#table-of-contents)
+
+## How To Get Help {#help}
+
+Every exported function has a help page accessible with `?functionName` — for
+example `?annotate_m6a_switches_genomic`. The "Details" sections contain
+information not repeated in this vignette, particularly around argument
+behaviour and edge cases.
+
+To report a bug, open an issue at
+[github.com/Tarunchikatipalli6/m6Aswitch/issues](https://github.com/Tarunchikatipalli6/m6Aswitch/issues)
+including (i) the code that produced the error, (ii) the full error message, and
+(iii) the output of `sessionInfo()`.
+
+[Back to Table of Contents](#table-of-contents)
+
+## What To Cite {#cite}
+
+m6Aswitch depends on work by others. Please cite the tools whose output you use.
+
+If you use:
+
+- **m6Aswitch itself**: cite reference 1.
+- **m6A predictions from m6Anet**: cite reference 2.
+- **Isoform switches from IsoformSwitchAnalyzeR**: cite reference 3.
+- **Coordinate lifting** (`lift_m6a_to_genomic`): cite reference 4, which
+  provides `mapFromTranscripts()`.
+- **Probability threshold selection**: reference 5 informs the recommended
+  cutoffs.
+
+**References**
+
+1. Chikatipalli, T. (2026). m6Aswitch: Integration of m6A modifications with
+   isoform switching. GitHub: Tarunchikatipalli6/m6Aswitch
+
+2. Hendra, C., Pratanwanich, P. N., Wan, Y. K., et al. (2022). Detection of m6A
+   from direct RNA sequencing using a multiple instance learning framework.
+   *Nature Methods* 19, 1590–1598.
+
+3. Vitting-Seerup, K. & Sandelin, A. (2019). IsoformSwitchAnalyzeR: analysis of
+   changes in genome-wide patterns of alternative splicing and its functional
+   consequences. *Bioinformatics* 35(21), 4469–4471.
+
+4. Lawrence, M., Huber, W., Pagès, H., et al. (2013). Software for computing and
+   annotating genomic ranges. *PLoS Computational Biology* 9(8), e1003118.
+
+5. Liu, H., Begik, O., Lucas, M. C., et al. (2023). Accurate detection of m6A
+   RNA modifications in the eukaryotic transcriptome with SCARLET.
+   *Nature Biotechnology* 41, 896–905.
+
+[Back to Table of Contents](#table-of-contents)
+
+---
+
+# Quick Start
+
+## Overview of the Workflow {#overview}
+
+```
+m6Anet output (per condition)        IsoformSwitchAnalyzeR switch pairs
+         |                                        |
+    parse_m6anet()                    parse_isoform_switch()
+         |                                        |
+  [ testability filter ]                          |
+         |                                        |
+  [ tag with condition ]                          |
+         |                                        |
+         +-----------------+----------------------+
+                           |
+                  lift_m6a_to_genomic()  <--- GTF
+                           |
+                 annotate_m6a_switches_genomic()
+                           |
+                    isoform_status  (structural)
+                    m6a_fate        (regulatory)
+                           |
+              +------------+------------+
+              |                         |
+      annotate_drach()      classify_lost_mechanism()  <--- GTF
+              |                         |
+              +------------+------------+
+                           |
+         export_annotated_switches()  /  plot_m6aswitch_results()
+```
+
+The workflow divides into two parts.
+
+**Part 1 — Prepare and integrate.** Parse both data sources, restrict to
+positions that were measurable in both conditions, tag conditions, and lift to
+genomic coordinates. This part determines whether the downstream results are
+interpretable.
+
+**Part 2 — Annotate and interpret.** Assign structural and regulatory
+classifications, add DRACH context, determine the mechanism behind each
+difference, and export or plot.
+
+## Example Workflow {#example-workflow}
+
+The complete workflow, for reference. Each step is explained in detail in
+[Detailed Workflow](#detailed-workflow).
+
+```r
+library(m6Aswitch)
+
+GTF <- "gencode.v49.annotation.gtf"
+
+# --- Part 1: prepare -------------------------------------------------------
+
+# Positions m6Anet evaluated in both conditions
+wt_all  <- parse_m6anet("wt.csv",  probability_threshold = 0)
+mut_all <- parse_m6anet("mut.csv", probability_threshold = 0)
+
+testable <- merge(
+  unique(wt_all[,  .(transcript_id, position)]),
+  unique(mut_all[, .(transcript_id, position)]),
+  by = c("transcript_id", "position")
+)
+
+# Sites above threshold, restricted to testable positions
+m6a_wt  <- merge(parse_m6anet("wt.csv",  0.9), testable,
+                 by = c("transcript_id", "position"))
+m6a_mut <- merge(parse_m6anet("mut.csv", 0.9), testable,
+                 by = c("transcript_id", "position"))
+
+# Tag conditions and combine
+m6a_wt[,  condition := "WT"]
+m6a_mut[, condition := "MUT"]
+combined <- rbind(m6a_wt, m6a_mut)
+
+# Switch pairs
+iso <- parse_isoform_switch("switch_pairs.txt", fdr_threshold = 0.05)
+
+# --- Part 2: annotate ------------------------------------------------------
+
+gr  <- lift_m6a_to_genomic(combined, GTF)
+res <- annotate_m6a_switches_genomic(gr, iso)
+res <- annotate_drach(res, m6a_wt, m6a_mut)
+res <- classify_lost_mechanism(res, GTF)
+
+# --- Results ---------------------------------------------------------------
+
+table(res$isoform_status)
+table(res$m6a_fate, useNA = "ifany")
+table(res$isoform_status, res$isoform_mechanism, useNA = "ifany")
+
+export_annotated_switches(res, output_prefix = "results")
+generate_summary_report(res, "report.txt")
+plot_m6aswitch_results(res, iso, "plots", "WT vs MUT")
+```
+
+[Back to Table of Contents](#table-of-contents)
+
+---
+
+# Core Concepts
+
+## Why Genomic Coordinates Are Required {#why-genomic}
+
+This is the central design decision in the package, and understanding it makes
+the rest of the workflow obvious.
+
+m6Anet reports a position within a transcript. Transcripts of the same gene have
+different exon composition, so transcript position 150 in isoform A and
+transcript position 150 in isoform B are unrelated locations.
+
+Consider a gene with three exons:
+
+```
+Isoform A:  Exon 1 (chr10:1,000-1,100)  Exon 2 (chr10:5,000-5,200)  Exon 3 (chr10:8,000-8,200)
+Isoform B:  Exon 1 (chr10:1,000-1,100)                              Exon 3 (chr10:8,000-8,200)
+```
+
+Isoform B skips exon 2.
+
+**Transcript position 150 in isoform A** is 50 bases into exon 2 (exon 1 covers
+positions 1–100), so it maps to `chr10:5,000 + 50 - 1 = chr10:5,049`.
+
+**Transcript position 150 in isoform B** is 50 bases into exon 3, so it maps to
+`chr10:8,000 + 50 - 1 = chr10:8,049`.
+
+Comparing "position 150" between the two isoforms compares two locations three
+kilobases apart. Any conclusion drawn from that comparison is meaningless.
+
+`lift_m6a_to_genomic()` converts every site to genomic coordinates using the
+exon structure from the GTF, after which comparisons are made at matched loci.
+
+Note that the exon structure is essential, not merely helpful. Using only the
+transcript's outer boundaries would place position 150 at
+`chr10:1,000 + 150 = chr10:1,150` — inside the intron, where no transcript
+sequence exists.
+
+[Back to Table of Contents](#table-of-contents)
+
+## The Two Classifications {#two-classifications}
+
+`annotate_m6a_switches_genomic()` produces two independent columns. They answer
+different questions and should not be substituted for one another.
+
+### `isoform_status` — structural
+
+*Which transcript of the switch pair carries this site?*
+
+| Value | Meaning |
+|---|---|
+| `ISOFORM_A_ONLY` | the site is on isoform A only |
+| `ISOFORM_B_ONLY` | the site is on isoform B only |
+| `IN_BOTH_ISOFORMS` | the genomic position exists on both isoforms |
+
+This reflects transcript structure. A longer isoform contains more DRACH
+positions and will tend to carry more detected sites, so an asymmetry here may
+be structural rather than biological.
+
+Always computed.
+
+### `m6a_fate` — regulatory
+
+*Which condition detected this site?*
+
+| Value | Meaning |
+|---|---|
+| `LOST` | detected in condition 1 only |
+| `GAINED` | detected in condition 2 only |
+| `RETAINED` | detected in both conditions |
+
+This reflects methylation state, independent of which isoform carries the site.
+
+`NA` unless a `condition` column was supplied to `lift_m6a_to_genomic()`. The
+function warns when it is missing.
+
+### They are not the same thing
+
+A site can be detected in **both** conditions while sitting on **only one**
+isoform of the pair. In that case `isoform_status` is `ISOFORM_B_ONLY` and
+`m6a_fate` is `RETAINED`. Neither is wrong; they describe different properties.
+
+Cross-tabulating them is often the most informative single command:
+
+```r
+table(res$isoform_status, res$m6a_fate, useNA = "ifany")
+```
+
+If the two are strongly associated, the structural and regulatory signals
+coincide. If they are independent, the isoform switch and the methylation change
+are separate phenomena in the same genes.
+
+[Back to Table of Contents](#table-of-contents)
+
+## Which Isoform Is A? {#which-isoform}
+
+IsoformSwitchAnalyzeR defines the effect size as:
+
+```
+dIF = IF(condition_2) - IF(condition_1)
+```
+
+where IF is the isoform fraction — the proportion of the gene's expression
+coming from that isoform.
+
+Switch pairs are conventionally built so that:
+
+- **isoform A** has negative dIF: used more in condition 1
+- **isoform B** has positive dIF: used more in condition 2
+
+The complication is that condition order follows **factor level**, which may not
+match expectation. `"IDH_MUT"` sorts alphabetically before `"IDH_WT"`, so in an
+IDH analysis the mutant becomes condition 1 and the wild type condition 2 —
+reversing the intuitive reading of A and B.
+
+`parse_isoform_switch()` prints the direction it detects:
+
+```
+Parsed switch_pairs.txt: 53 switch pair(s) at FDR <= 0.05
+  Comparison: IDH_R132H (condition_1) vs IDH_WT (condition_2)
+  isoform_a is favoured in IDH_R132H
+  isoform_b is favoured in IDH_WT
+```
+
+It also warns if most dIF values are negative, which suggests the A/B assignment
+is reversed relative to the usual convention.
+
+To control the order, set the factor level explicitly in the design matrix
+before running IsoformSwitchAnalyzeR:
+
+```r
+design$condition <- factor(design$condition, levels = c("WT", "MUT"))
+```
+
+You can verify the direction against the isoform fractions directly:
+
+```r
+iso_dt <- as.data.table(iso_dexseq$isoformFeatures)
+head(iso_dt[, .(isoform_id, condition_1, condition_2, IF1, IF2, dIF)])
+```
+
+If `dIF = IF2 - IF1` and condition 1 is the mutant, then positive dIF means
+higher usage in wild type.
+
+[Back to Table of Contents](#table-of-contents)
+
+## Detection Versus Absence {#detection-absence}
+
+m6Anet evaluates a position only where read coverage is sufficient. It does not
+report "this position was tested and found unmodified" separately from "this
+position was never tested." Both appear as absence from the output.
+
+This matters when library depths differ between conditions. The shallower
+library evaluates fewer positions, so more positions appear absent from it, and
+every such position looks like a gain in the deeper condition.
+
+The effect can be large. In an analysis comparing a single astrocyte replicate
+against three pooled tumour replicates, the naive result was 80.6% of sites
+classified as gained. Examining those sites showed that of 4,612 gains, 4,611
+had never been evaluated in the astrocyte library at all — they were absent even
+when the probability threshold was set to zero.
+
+Restricting to positions evaluated in both conditions brought the site counts
+into balance (4,300 versus 4,141, from 5,095 versus 28,644) and produced a
+near-symmetric fate distribution.
+
+The pattern to use:
+
+```r
+a_all <- parse_m6anet("cond_a.csv", probability_threshold = 0)
+b_all <- parse_m6anet("cond_b.csv", probability_threshold = 0)
+
+testable <- merge(
+  unique(a_all[, .(transcript_id, position)]),
+  unique(b_all[, .(transcript_id, position)]),
+  by = c("transcript_id", "position")
+)
+```
+
+Parsing at `probability_threshold = 0` returns every position m6Anet evaluated,
+regardless of the call. Intersecting the two gives the set where absence carries
+information.
+
+This is separate from the probability threshold, and both should be applied. The
+threshold controls confidence in a positive call; the testability filter
+controls whether a call was possible at all.
+
+[Back to Table of Contents](#table-of-contents)
+
+---
+
+# Detailed Workflow
+
+## Step 1: Parsing m6Anet Output {#step1}
+
+```r
+parse_m6anet(m6anet_file,
+             probability_threshold = 0.9,
+             transcript_col = "transcript_id",
+             position_col   = "position",
+             prob_col       = "probability",
+             keep_extra     = NULL)
+```
+
+m6Anet's own output file is `data.site_proba.csv`, with columns that do not match
+the function defaults. Specify them:
+
+```r
+m6a <- parse_m6anet(
+  "data.site_proba.csv",
+  probability_threshold = 0.9,
+  transcript_col = "ensembl_transcript_id",
+  position_col   = "transcript_position",
+  prob_col       = "probability_modified"
+)
+```
+
+The function standardises column names, drops rows with missing probabilities,
+applies the threshold, and converts coordinates.
+
+### The coordinate conversion
+
+m6Anet reports **0-based** positions. R and Bioconductor use **1-based**
+coordinates. `parse_m6anet()` adds 1.
+
+This is verifiable against the transcript sequence, and worth understanding
+because an off-by-one error would propagate silently through every downstream
+step. m6A occurs at the adenosine in a DRACH motif, and m6Anet reports the 5-mer
+context centred on the modified base. Checking 100 sites:
+
+| | Base at position | 5-mer matches reported kmer |
+|---|---|---|
+| Raw position (0-based) | 87 G, 13 A | 0/100 |
+| Position + 1 (1-based) | **100 A** | **100/100** |
+
+Only the shifted position gives an adenosine at every site and reproduces the
+kmer m6Anet reported. The conversion is correct.
+
+### Retaining extra columns
+
+`kmer` is kept automatically when present, since `annotate_drach()` needs it. To
+carry other columns through, use `keep_extra`:
+
+```r
+m6a <- parse_m6anet("data.site_proba.csv", keep_extra = c("n_reads", "mod_ratio"))
+```
+
+`n_reads` is useful for quality control — checking whether an apparent
+difference between conditions coincides with a coverage difference.
+
+**Returns:** `transcript_id`, `position`, `probability`, `kmer`, plus anything
+named in `keep_extra`.
+
+[Back to Table of Contents](#table-of-contents)
+
+## Step 2: Building a Testability Filter {#step2}
+
+Covered conceptually in [Detection Versus Absence](#detection-absence). The
+implementation:
+
+```r
+# Every position m6Anet evaluated, regardless of outcome
+wt_all  <- parse_m6anet("wt.csv",  probability_threshold = 0,
+                        transcript_col = "ensembl_transcript_id",
+                        position_col   = "transcript_position",
+                        prob_col       = "probability_modified")
+mut_all <- parse_m6anet("mut.csv", probability_threshold = 0,
+                        transcript_col = "ensembl_transcript_id",
+                        position_col   = "transcript_position",
+                        prob_col       = "probability_modified")
+
+cat("Evaluated in WT :", nrow(unique(wt_all[,  .(transcript_id, position)])), "\n")
+cat("Evaluated in MUT:", nrow(unique(mut_all[, .(transcript_id, position)])), "\n")
+
+testable <- merge(
+  unique(wt_all[,  .(transcript_id, position)]),
+  unique(mut_all[, .(transcript_id, position)]),
+  by = c("transcript_id", "position")
+)
+cat("Testable in both:", nrow(testable), "\n")
+```
+
+Then apply it to the thresholded sites:
+
+```r
+m6a_wt  <- merge(parse_m6anet("wt.csv",  0.9, ...), testable,
+                 by = c("transcript_id", "position"))
+m6a_mut <- merge(parse_m6anet("mut.csv", 0.9, ...), testable,
+                 by = c("transcript_id", "position"))
+
+cat("WT sites (testable) :", nrow(m6a_wt),  "\n")
+cat("MUT sites (testable):", nrow(m6a_mut), "\n")
+```
+
+The two site counts should now be broadly comparable. A large remaining
+asymmetry is worth investigating before proceeding — it may reflect genuine
+biology, or a coverage difference the filter did not fully address.
+
+### Is the filter always necessary?
+
+If the two conditions have similar sequencing depth and similar numbers of
+evaluated positions, the filter changes little. Check first:
+
+```r
+raw_wt  <- fread("wt.csv")
+raw_mut <- fread("mut.csv")
+
+cat("Positions reported:  WT", nrow(raw_wt),  " MUT", nrow(raw_mut), "\n")
+cat("Median reads/site:   WT", median(raw_wt$n_reads),
+    " MUT", median(raw_mut$n_reads), "\n")
+```
+
+If these are close, the filter is a safeguard rather than a correction. If they
+differ by more than roughly 25%, it is doing real work.
+
+[Back to Table of Contents](#table-of-contents)
+
+## Step 3: Parsing Isoform Switches {#step3}
+
+```r
+parse_isoform_switch(iso_switch_file,
+                     fdr_threshold = 0.05,
+                     gene_col   = "geneID",
+                     iso_a_col  = "isoformID_A",
+                     iso_b_col  = "isoformID_B",
+                     fdr_col    = "isoform_switch_q_value",
+                     cond_a_col = "condition_1",
+                     cond_b_col = "condition_2",
+                     dif_col    = "dIF")
+```
+
+Reads a switch-pair table, filters by FDR, and deduplicates on the
+gene–isoform triple keeping the most significant pair.
+
+```r
+iso <- parse_isoform_switch("switch_pairs.txt", fdr_threshold = 0.05)
+```
+
+The function reports the comparison and the A/B direction, as described in
+[Which Isoform Is A?](#which-isoform). Read that output — it is the easiest place
+in the workflow to introduce a misinterpretation.
+
+It also reports how many genes have more than one switch pair. This matters for
+the volcano plot, which merges effect sizes on the full pair rather than the gene
+alone.
+
+**Returns:** `gene_id`, `isoform_a`, `isoform_b`, `fdr`, `condition_1`,
+`condition_2`, `dif`.
+
+If you do not have a switch-pair file, see
+[Building Switch Pairs from IsoformSwitchAnalyzeR](#building-pairs).
+
+[Back to Table of Contents](#table-of-contents)
+
+## Step 4: Tagging Conditions {#step4}
+
+To enable the regulatory classification, add a `condition` column to each parsed
+table and combine them.
+
+```r
+m6a_wt[,  condition := "WT"]
+m6a_mut[, condition := "MUT"]
+
+combined <- rbind(m6a_wt, m6a_mut)
+```
+
+Two requirements:
+
+**Do not deduplicate.** A position detected in both conditions must appear twice
+in the combined table — once per condition. Calling `unique()` on
+`transcript_id` and `position` would collapse them and make the condition
+comparison impossible.
+
+**Labels must match the switch table.** The strings must be identical to
+`condition_1` and `condition_2` in the parsed switch pairs.
+`annotate_m6a_switches_genomic()` warns if they do not match, but the warning
+only fires if the labels are wrong, not if they are swapped.
+
+```r
+# Verify
+unique(combined$condition)
+unique(iso[, .(condition_1, condition_2)])
+```
+
+Without a `condition` column the workflow still runs. `isoform_status` is
+computed normally; `m6a_fate` is `NA` throughout, and a warning explains why.
+
+[Back to Table of Contents](#table-of-contents)
+
+## Step 5: Lifting to Genomic Coordinates {#step5}
+
+```r
+lift_m6a_to_genomic(m6a_sites, gtf_file)
+```
+
+```r
+gr <- lift_m6a_to_genomic(combined, gtf_file = "gencode.v49.annotation.gtf")
+```
+
+The function builds a transcript database from the GTF, extracts exon structure
+per transcript, and maps each site through it.
+
+Extra columns — including `condition` — are forwarded to the output.
+
+**Returns:** a `GRanges` with metadata columns `transcript_id`,
+`transcript_position`, `probability`, plus forwarded columns.
+
+### What can go wrong
+
+**Transcript IDs not found in the GTF.** The function warns and reports how many
+sites were skipped, with example IDs. The usual cause is a version mismatch —
+`ENST00000054950.4` in one file and `ENST00000054950` in the other. Check:
+
+```r
+txdb <- txdbmaker::makeTxDbFromGFF(GTF)
+tx_names <- mcols(GenomicFeatures::transcripts(txdb))$tx_name
+
+length(intersect(unique(combined$transcript_id), tx_names))
+length(intersect(sub("\\..*", "", unique(combined$transcript_id)),
+                 sub("\\..*", "", tx_names)))
+```
+
+If the version-stripped overlap is much larger, strip versions from both sides
+before lifting.
+
+**GTF release mismatch.** The GTF must be the same annotation release the reads
+were aligned to. Transcript coordinates are meaningless against a different
+release, and the failure is silent — sites will map, just to wrong locations.
+
+### Runtime
+
+Building the transcript database from a full GENCODE GTF takes a few minutes and
+dominates the runtime of this step. If you are running the workflow repeatedly,
+build it once and reuse it:
+
+```r
+txdb      <- txdbmaker::makeTxDbFromGFF(GTF)
+all_exons <- GenomicFeatures::exonsBy(txdb, by = "tx", use.names = TRUE)
+```
+
+[Back to Table of Contents](#table-of-contents)
+
+## Step 6: Annotating Switches {#step6}
+
+```r
+annotate_m6a_switches_genomic(m6a_sites_gr, iso_switches)
+```
+
+```r
+res <- annotate_m6a_switches_genomic(gr, iso)
+
+cat("Structural:\n");  print(table(res$isoform_status))
+cat("\nRegulatory:\n"); print(table(res$m6a_fate, useNA = "ifany"))
+cat("\nCross-tabulated:\n")
+print(table(res$isoform_status, res$m6a_fate, useNA = "ifany"))
+```
+
+For each switch pair, the function collects the sites lifted from isoform A and
+from isoform B, takes the union of distinct genomic loci, and for each locus
+determines presence on each isoform and detection in each condition.
+
+Matching uses `type = "equal"` — exact single-base coincidence, not overlap or
+proximity.
+
+### Output columns
+
+**Identity and coordinates**
+
+`gene_id`, `isoform_a`, `isoform_b`, `condition_1`, `condition_2`,
+`genomic_position`, `seqname`, `start`, `end`, `strand`, `transcript_position`
+
+**Structural**
+
+`m6a_in_isoform_a`, `m6a_in_isoform_b`, `isoform_status`, `probability_a`,
+`probability_b`
+
+**Regulatory**
+
+`m6a_fate`, `probability_c1`, `probability_c2`
+
+**From the switch table**
+
+`fdr`, `dif`
+
+### A note on the probability columns
+
+`probability_a` is the m6A probability recorded for that site **on isoform A**.
+For an `ISOFORM_B_ONLY` site it is `NA` — not because the site is unmethylated,
+but because it is not on isoform A at all.
+
+`probability_c1` and `probability_c2` are the probabilities **in each
+condition**, and are the ones to use when asking about methylation differences.
+
+[Back to Table of Contents](#table-of-contents)
+
+## Step 7: DRACH Motif Annotation {#step7}
+
+```r
+annotate_drach(m6a_switches, m6a_condition_a, m6a_condition_b)
+```
+
+```r
+res <- annotate_drach(res, m6a_wt, m6a_mut)
+table(res$drach_motif, useNA = "ifany")
+```
+
+m6A occurs almost exclusively in a DRACH sequence context:
+
+| Position | Symbol | Allowed bases |
+|---|---|---|
+| 1 | D | A, G, U |
+| 2 | R | A, G |
+| 3 | **A** | **A** — the modified base |
+| 4 | C | C |
+| 5 | H | A, C, U |
+
+3 × 2 × 1 × 1 × 3 = **18 possible 5-mers**.
+
+The function reads the kmer m6Anet already reports rather than extracting
+sequence from a FASTA, so no transcript sequence file is needed. The kmer is
+looked up from whichever isoform carries the site, determined by
+`isoform_status`.
+
+### An important caveat
+
+m6Anet evaluates only DRACH positions. Its output contains exactly the 18
+possible DRACH 5-mers and nothing else:
+
+```
+AAACA AAACC AAACT AGACA AGACC AGACT
+GAACA GAACC GAACT GGACA GGACC GGACT
+TAACA TAACC TAACT TGACA TGACC TGACT
+```
+
+So `drach_motif` will be uniformly `TRUE` for m6Anet input. The column confirms
+the input rather than filtering it.
+
+It becomes informative when the input comes from a tool that evaluates
+non-DRACH positions, in which case sites outside a DRACH context are less
+credible calls.
+
+[Back to Table of Contents](#table-of-contents)
+
+## Step 8: Classifying the Mechanism {#step8}
+
+```r
+classify_lost_mechanism(m6a_switches, gtf_file)
+```
+
+```r
+res <- classify_lost_mechanism(res, gtf_file = GTF)
+table(res$isoform_status, res$isoform_mechanism, useNA = "ifany")
+```
+
+When a site appears on one isoform but not the other, there are two possible
+explanations, and distinguishing them is the point of this step.
+
+**Structural.** The other isoform does not contain that sequence — the exon was
+spliced out. There is no adenosine at that position to modify. The difference is
+a consequence of splicing.
+
+**Regulatory.** The other isoform does contain the sequence. The adenosine is
+present. But no modification was detected there. The difference is in
+methylation state, not transcript structure.
+
+The function determines which by checking whether the *other* isoform's exon
+structure contains the genomic position.
+
+| Value | Type | Meaning |
+|---|---|---|
+| `A_ONLY_EXON_SKIPPED` | structural | position absent from isoform B |
+| `A_ONLY_UNMETHYLATED` | regulatory | position present in B, not methylated |
+| `B_ONLY_EXON_INCLUDED` | structural | position absent from isoform A |
+| `B_ONLY_NEW_METHYLATION` | regulatory | position present in A, methylated only in B |
+
+Sites with `IN_BOTH_ISOFORMS` receive `NA` — there is no difference to explain.
+
+The function prints a summary grouping the four classes:
+
+```
+Classification complete:
+  Structural (splicing explains the difference):
+    A_ONLY_EXON_SKIPPED    : 2
+    B_ONLY_EXON_INCLUDED   : 0
+  Regulatory (position present in both isoforms):
+    A_ONLY_UNMETHYLATED    : 34
+    B_ONLY_NEW_METHYLATION : 78
+```
+
+**Adds:** `isoform_mechanism`, `target_isoform_has_exon`.
+
+Note that `target_isoform_has_exon` refers to different isoforms depending on
+the row: isoform B for `ISOFORM_A_ONLY` sites, isoform A for `ISOFORM_B_ONLY`
+sites. The target is always the isoform that lacks the m6A call.
+
+### Interpreting the split
+
+The regulatory classes cannot be explained by splicing. If they dominate — as
+they typically do — the isoform switch is not relocating m6A sites; the sites are
+at positions both transcripts contain, and only the modification state differs.
+
+The caveat is that "not methylated on isoform B" means m6Anet made no call at
+that position on that transcript. That could be genuine absence of modification,
+or insufficient reads assigned to that isoform at that position. The function
+does not distinguish these.
+
+[Back to Table of Contents](#table-of-contents)
+
+## Step 9: Export and Reporting {#step9}
+
+### CSV and BED
+
+```r
+export_annotated_switches(m6a_switches,
+                          output_prefix = "m6aswitch_results",
+                          format        = "both",
+                          add_igv_track = TRUE,
+                          color_by      = "isoform_status")
+```
+
+Writes a full CSV and a BED9 file suitable for genome browsers.
+
+BED colouring follows `color_by`:
+
+| `isoform_status` | Colour | | `m6a_fate` | Colour |
+|---|---|---|---|---|
+| ISOFORM_A_ONLY | red | | LOST | red |
+| ISOFORM_B_ONLY | green | | GAINED | green |
+| IN_BOTH_ISOFORMS | blue | | RETAINED | blue |
+
+Coordinates are converted to BED's 0-based half-open convention. The score field
+carries the m6A probability scaled to 0–1000.
+
+To export the regulatory classification instead:
+
+```r
+export_annotated_switches(res, "results_condition", color_by = "m6a_fate")
+```
+
+This errors clearly if `m6a_fate` is entirely `NA`.
+
+### Text report
+
+```r
+generate_summary_report(res, output_file = "m6aswitch_report.txt")
+```
+
+Produces a plain-text summary covering both classifications, the mechanism split
+with a structural-versus-regulatory breakdown, DRACH context, and the top genes
+by site count. Sections are omitted when the corresponding columns are absent, so
+the function works on partially-annotated results.
+
+[Back to Table of Contents](#table-of-contents)
+
+## Step 10: Visualisation {#step10}
+
+### The full figure set
+
+```r
+plot_m6aswitch_results(classified       = res,
+                       switch_pairs     = iso,
+                       output_dir       = "plots",
+                       analysis_name    = "WT vs MUT",
+                       top_n_genes      = 30,
+                       top_n_gene_plots = 5,
+                       color_by         = "isoform_status")
+```
+
+Five PDFs:
+
+1. **Distribution** — bar chart of the selected classification with counts and
+   percentages.
+2. **Mechanism breakdown** — the four mechanism classes, with a subtitle
+   distinguishing structural from regulatory.
+3. **Top genes heatmap** — genes by classification, coloured by site count.
+4. **Volcano** — dIF against Δm6A probability, coloured by classification.
+5. **Per-gene tracks** — m6A sites positioned along both isoforms of the switch,
+   one PDF per gene.
+
+Passing `color_by = "m6a_fate"` produces the same figures coloured by the
+regulatory classification.
+
+### Individual plots
+
+For interactive exploration:
+
+```r
+plot_m6a_switches(res, plot_type = "summary")
+plot_m6a_switches(res, plot_type = "heatmap")
+plot_m6a_switches(res, plot_type = "delta_prob")
+```
+
+`delta_prob` shows the distribution of probability differences between isoforms
+as a violin and boxplot, with undetected sites treated as probability zero.
+
+### A single gene
+
+```r
+plot_isoform_details(gene = "ARHGDIA", m6a_switches = res)
+```
+
+Optionally scale positions by isoform length so the two transcripts are directly
+comparable:
+
+```r
+tx_len <- as.data.table(GenomicFeatures::transcriptLengths(txdb))
+len_vec <- setNames(tx_len$tx_len, tx_len$tx_name)
+
+plot_isoform_details("ARHGDIA", res, iso_lengths = len_vec)
+```
+
+[Back to Table of Contents](#table-of-contents)
+
+---
+
+# Interpreting Results
+
+## Reading the Output Table {#reading-output}
+
+A representative row set for one gene:
+
+```
+gene_id  isoform_a  isoform_b  seqname  start      isoform_status    probability_a  probability_b
+ARHGDIA  ENST...12  ENST...78  chr17    81869599   IN_BOTH_ISOFORMS  0.969          0.960
+ARHGDIA  ENST...12  ENST...78  chr17    81868889   IN_BOTH_ISOFORMS  0.963          0.974
+ARHGDIA  ENST...12  ENST...78  chr17    81868880   IN_BOTH_ISOFORMS  0.983          0.989
+ARHGDIA  ENST...12  ENST...78  chr17    81868031   IN_BOTH_ISOFORMS  0.979          0.959
+ARHGDIA  ENST...12  ENST...78  chr17    81868259   ISOFORM_B_ONLY    NA             0.826
+```
+
+Four sites are present on both isoforms with near-identical high-confidence
+probabilities. One site is on isoform B only.
+
+Two things worth noticing.
+
+**The retained sites agree closely.** Probabilities differ by less than 0.02
+between isoforms at every shared position. Since these are independent
+measurements of the same genomic locus on two different transcripts, close
+agreement is a useful internal consistency check — it indicates the coordinate
+lift and position matching are working.
+
+**The differing site sits near the threshold.** 0.826, against 0.96–0.99 for the
+retained sites. A site scraping just past a 0.8 cutoff is a weaker call than one
+at 0.98. Worth checking systematically:
+
+```r
+cat("Retained sites (isoform A):\n")
+print(summary(res[isoform_status == "IN_BOTH_ISOFORMS"]$probability_a))
+cat("\nISOFORM_B_ONLY sites:\n")
+print(summary(res[isoform_status == "ISOFORM_B_ONLY"]$probability_b))
+```
+
+If the differing sites cluster near the threshold while retained sites sit well
+above it, some of the apparent differences are threshold effects rather than
+genuine absence.
+
+[Back to Table of Contents](#table-of-contents)
+
+## A Worked Interpretation {#worked-interpretation}
+
+From an analysis of 53 isoform switches between IDH-wildtype and IDH-mutant
+glioma cell lines, of which 35 carried m6A sites:
+
+```
+Isoform status:
+  ISOFORM_B_ONLY      78
+  ISOFORM_A_ONLY      36
+  IN_BOTH_ISOFORMS    32
+
+Mechanism:
+  Structural (splicing explains the difference):
+    A_ONLY_EXON_SKIPPED       2
+    B_ONLY_EXON_INCLUDED      0
+  Regulatory (position present in both isoforms):
+    A_ONLY_UNMETHYLATED      34
+    B_ONLY_NEW_METHYLATION   78
+```
+
+### What can be concluded
+
+**112 of 114 differences (98%) occur at positions both isoforms contain.** Only
+two are explained by exon skipping.
+
+This rules out the straightforward structural story — that the switch moves to an
+isoform which splices out the methylated exon. If that were the mechanism,
+exon-skipping would dominate. It does not.
+
+So the m6A differences between switching isoforms reflect modification state
+rather than exon content.
+
+### What cannot be concluded
+
+**"78 sites gained methylation in the mutant."** `isoform_status` describes which
+transcript carries the site, not which condition. For a statement about
+methylation change between conditions, use `m6a_fate`.
+
+**"Isoform B is more methylated."** The 78:36 asymmetry may be structural. Longer
+transcripts contain more DRACH positions and accumulate more detected sites.
+Check before interpreting — see
+[Isoform Length as a Confounder](#length-confounder).
+
+### Scale
+
+35 switch pairs and 114 differing sites is enough to inspect gene by gene. It is
+not enough for the 78:36 ratio to be treated as a statistic. Report it
+descriptively.
+
+[Back to Table of Contents](#table-of-contents)
+
+## Threshold Selection {#thresholds}
+
+| Threshold | Use |
+|---|---|
+| 0.9 | Primary, publication-quality results |
+| 0.8 | Moderate |
+| 0.5 | Sensitivity analysis, supplementary material |
+| 0.0 | All evaluated positions — for the testability filter |
+
+Running both a strict and a permissive threshold and reporting them separately
+is good practice. It demonstrates that conclusions do not depend on an arbitrary
+cutoff.
+
+```r
+# Primary
+m6a_strict <- parse_m6anet("cond.csv", probability_threshold = 0.9, ...)
+
+# Sensitivity
+m6a_broad  <- parse_m6anet("cond.csv", probability_threshold = 0.5, ...)
+```
+
+Run the full workflow on each and export with distinct prefixes:
+
+```r
+export_annotated_switches(res_strict, "results_p90")
+export_annotated_switches(res_broad,  "results_p50")
+```
+
+Both should be applied on top of the testability filter, not instead of it.
+
+[Back to Table of Contents](#table-of-contents)
+
+## Isoform Length as a Confounder {#length-confounder}
+
+A longer transcript contains more DRACH positions and more opportunities for a
+site to be detected. If isoform B is systematically longer than isoform A across
+your switch pairs, an excess of `ISOFORM_B_ONLY` sites follows mechanically.
+
+Check before interpreting any asymmetry:
+
+```r
+tx_len <- as.data.table(GenomicFeatures::transcriptLengths(txdb))
+
+iso <- merge(iso, tx_len[, .(tx_name, len_a = tx_len)],
+             by.x = "isoform_a", by.y = "tx_name", all.x = TRUE)
+iso <- merge(iso, tx_len[, .(tx_name, len_b = tx_len)],
+             by.x = "isoform_b", by.y = "tx_name", all.x = TRUE)
+
+cat("Median length, isoform A:", median(iso$len_a, na.rm = TRUE), "\n")
+cat("Median length, isoform B:", median(iso$len_b, na.rm = TRUE), "\n")
+cat("Pairs where B is longer  :", sum(iso$len_b > iso$len_a, na.rm = TRUE),
+    "of", sum(!is.na(iso$len_a) & !is.na(iso$len_b)), "\n")
+```
+
+If isoform B is longer in most pairs, normalise before comparing — for example by
+expressing site counts per kilobase, or by restricting to pairs of similar
+length.
+
+Coverage is the other candidate. If one isoform receives more reads, more of its
+positions clear m6Anet's minimum:
+
+```r
+m6a_with_reads <- parse_m6anet("cond.csv", keep_extra = "n_reads", ...)
+```
+
+[Back to Table of Contents](#table-of-contents)
+
+---
+
+# Preparing Inputs
+
+## Building Switch Pairs from IsoformSwitchAnalyzeR {#building-pairs}
+
+IsoformSwitchAnalyzeR reports per-isoform statistics. m6Aswitch needs them
+paired: for each gene, the isoform used more in condition 1 alongside the one
+used more in condition 2.
+
+```r
+library(IsoformSwitchAnalyzeR)
+library(data.table)
+
+# Run the standard IsoformSwitchAnalyzeR workflow to obtain iso_dexseq,
+# then extract pairs:
+
+iso_dt <- as.data.table(iso_dexseq$isoformFeatures)
+
+sig <- iso_dt[
+  !is.na(isoform_switch_q_value) &
+  isoform_switch_q_value < 0.05 &
+  abs(dIF) >= 0.1
+]
+cat("Significant switching isoforms:", nrow(sig), "\n")
+
+pairs_list <- list()
+for (g in unique(sig$gene_id)) {
+  sub  <- sig[gene_id == g]
+  up   <- sub[dIF > 0]   # gaining usage in condition_2
+  down <- sub[dIF < 0]   # losing usage in condition_2
+
+  if (nrow(up) > 0 && nrow(down) > 0) {
+    pairs_list[[length(pairs_list) + 1]] <- data.table(
+      geneID                 = g,
+      isoformID_A            = down$isoform_id[1],
+      isoformID_B            = up$isoform_id[1],
+      condition_1            = down$condition_1[1],
+      condition_2            = down$condition_2[1],
+      isoform_switch_q_value = min(sub$isoform_switch_q_value),
+      dIF                    = up$dIF[1]
+    )
+  }
+}
+
+switch_pairs <- rbindlist(pairs_list)
+cat("Switch pairs:", nrow(switch_pairs), "\n")
+fwrite(switch_pairs, "switch_pairs.txt", sep = "\t")
+```
+
+Note that a gene contributes a pair only if it has both an up- and a
+down-regulated isoform above the dIF cutoff. Genes with a single significant
+isoform are excluded, since there is no pair to compare.
+
+To make the A/B direction match expectation, set the factor level before running
+IsoformSwitchAnalyzeR:
+
+```r
+design$condition <- factor(design$condition, levels = c("WT", "MUT"))
+```
+
+[Back to Table of Contents](#table-of-contents)
+
+## Choosing a GTF {#choosing-gtf}
+
+The GTF must be the **same annotation release** used to build the reference the
+reads were aligned to. This is not a soft requirement — transcript coordinates
+differ between releases, and a mismatch produces genomic positions that are
+wrong without any error being raised.
+
+If you aligned to `gencode.v49.transcripts.fa`, use
+`gencode.v49.annotation.gtf`.
+
+For human and mouse, GENCODE provides matched FASTA and GTF pairs. For other
+species, Ensembl is the usual choice; note that Ensembl distributes cDNA and
+ncRNA sequences as separate FASTA files, and the matching GTF is the one
+including haplotypes and scaffolds (`.chr_patch_hapl_scaff.gtf`).
+
+Verify the overlap before running the full workflow:
+
+```r
+txdb <- txdbmaker::makeTxDbFromGFF(GTF)
+tx_names <- mcols(GenomicFeatures::transcripts(txdb))$tx_name
+
+my_tx <- unique(combined$transcript_id)
+cat("Transcripts in data:", length(my_tx), "\n")
+cat("Found in GTF       :", length(intersect(my_tx, tx_names)), "\n")
+```
+
+Anything below near-complete overlap indicates a version or formatting mismatch
+worth resolving first.
+
+[Back to Table of Contents](#table-of-contents)
+
+---
+
+# Validation
+
+The coordinate handling and classification logic have been verified against
+independent recomputation and manual calculation.
+
+## Coordinate Handling {#validation-coords}
+
+**Round-trip.** Mapping transcript → genome → transcript should return the
+original position.
+
+```r
+back <- GenomicFeatures::mapToTranscripts(genomic_sites, all_exons)
+# 178 of 178 sites returned their exact original transcript position
+```
+
+**Manual verification.** Walking the exon structure by hand for a single site:
+
+```
+Transcript : ENST00000196061.5   strand: +
+Position   : 815  ->  exon 8, offset 11
+Manual     : chr:11,957,852
+Package    : chr:11,957,852
+```
+
+**Strand handling.** On minus-strand transcripts, higher transcript positions
+must map to lower genomic coordinates.
+
+| | Median correlation between transcript and genomic position |
+|---|---|
+| Plus strand | +0.999 |
+| Minus strand | −0.992 |
+
+Correctly inverted. The correlations are not exactly ±1 because splicing
+introduces discontinuities in genomic coordinate — which is the expected
+behaviour for spliced transcripts.
+
+**Exon membership.** Every lifted site fell within an exon of its transcript
+(178/178). A site landing in an intron would indicate the mapping ignored splice
+structure.
+
+**Coordinate convention.** Verified against transcript sequence, as described in
+[Step 1](#step1): 100/100 sites give an adenosine at the converted position and
+100/100 reproduce the reported kmer.
+
+## Classification Logic {#validation-logic}
+
+**Fate assignment.** Cross-tabulating the classification against the underlying
+presence flags:
+
+```
+                    A:F B:T   A:T B:F   A:T B:T
+ISOFORM_B_ONLY         78         0         0
+ISOFORM_A_ONLY          0        36         0
+IN_BOTH_ISOFORMS        0         0        32
+```
+
+Perfect diagonal, zero violations. Probability columns are `NA` exactly where
+expected.
+
+**Mechanism classification.** Recomputing the exon-overlap test independently of
+the package:
+
+```
+Package flag vs independent recompute:
+        FALSE  TRUE  <NA>
+FALSE       2     0     0
+TRUE        0   112     0
+<NA>        0     0    32
+
+Disagreements: 0
+```
+
+Both `EXON_SKIPPED` calls were additionally verified by hand — the genomic
+positions are genuinely absent from the target isoform's exon structure.
+
+**DRACH annotation.** 146/146 sites agreed with an independent recomputation from
+the raw kmer column.
+
+[Back to Table of Contents](#table-of-contents)
+
+---
+
+# Frequently Asked Questions {#faq}
+
+### Do I need to run the testability filter?
+
+Not always, but you need to know whether you do. If both conditions evaluated a
+similar number of positions and have similar coverage, the filter changes little.
+If they differ substantially, it is the difference between a real result and a
+depth artifact. Check the raw position counts before deciding — the code is in
+[Step 2](#step2).
+
+### Why is `m6a_fate` all NA?
+
+No `condition` column reached `annotate_m6a_switches_genomic()`. Either it was
+never added, or it was lost when the tables were combined. The most common cause
+is calling `unique()` on the combined table, which collapses each position to a
+single row and discards one condition's observation.
+
+The function warns when the column is missing. If you did not see the warning,
+check that the column survived the lift:
+
+```r
+"condition" %in% names(S4Vectors::mcols(gr))
+```
+
+### Why is `drach_motif` always TRUE?
+
+m6Anet evaluates only DRACH positions, so every call it makes is DRACH by
+construction. The column confirms the input rather than filtering it. It becomes
+informative with input from tools that evaluate other sequence contexts.
+
+### My isoform A and B seem backwards.
+
+Almost certainly a factor-level issue. `parse_isoform_switch()` prints the
+direction it detects — read that output. Verify against the isoform fractions:
+
+```r
+head(iso_dt[, .(isoform_id, condition_1, condition_2, IF1, IF2, dIF)])
+```
+
+If `dIF = IF2 - IF1` and condition 1 is not what you expected, the A/B assignment
+is reversed. Set the factor level explicitly and rerun.
+
+### Nothing lifted — all sites failed.
+
+Usually transcript ID mismatch between the m6A data and the GTF. Compare
+directly:
+
+```r
+txdb <- txdbmaker::makeTxDbFromGFF(GTF)
+tx_names <- mcols(GenomicFeatures::transcripts(txdb))$tx_name
+
+cat("Direct overlap:",
+    length(intersect(unique(combined$transcript_id), tx_names)), "\n")
+cat("Version-stripped overlap:",
+    length(intersect(sub("\\..*", "", unique(combined$transcript_id)),
+                     sub("\\..*", "", tx_names))), "\n")
+```
+
+If direct overlap is zero but version-stripped overlap is large, strip versions
+from both sides.
+
+`lift_m6a_to_genomic()` reports the distinct error messages it encountered, which
+usually identifies the cause directly.
+
+### The overlap between m6A and switching isoforms is small.
+
+Expected when the isoform switch comparison is subtle. A comparison between two
+closely-related conditions may yield only tens of switches, of which a subset
+carry detected m6A. This limits what can be claimed statistically but does not
+prevent gene-by-gene inspection.
+
+If the overlap is zero, check that the two datasets use compatible transcript
+identifiers.
+
+### Can I compare more than two conditions?
+
+Not in a single call. `annotate_m6a_switches_genomic()` takes two condition
+labels, matching the pairwise structure of a switch pair.
+
+For multiple conditions, run the workflow once per pairwise comparison, each with
+its own switch pairs and its own pair of m6A tables. Do not pool conditions on
+one side unless the switch pairs were generated from the same pooling — the
+comparison must be the same on both sides.
+
+### Should I pool replicates before running m6Anet?
+
+Pooling gives more reads per position and therefore more evaluated positions. The
+cost is that replicate-level variation becomes invisible: you cannot tell whether
+a difference is consistent across replicates or driven by one library.
+
+If you have the per-replicate dataprep output, running inference per replicate
+and checking consistency is worth the extra time. Pooled analysis should carry
+that limitation as a stated caveat.
+
+### The function modified my input table.
+
+`classify_lost_mechanism()` works on a copy and returns the result — assign it:
+
+```r
+res <- classify_lost_mechanism(res, GTF)
+```
+
+Note that `data.table`'s `:=` operator modifies by reference in general, so if you
+add a `condition` column to a parsed table, the original object is changed. This
+is normal `data.table` behaviour, not specific to this package.
+
+### How do I cite the package?
+
+See [What To Cite](#cite). Please also cite m6Anet and IsoformSwitchAnalyzeR,
+without which the analysis is not possible.
+
+[Back to Table of Contents](#table-of-contents)
+
+---
+
+# Final Remarks
+
+m6Aswitch is a thin layer over two mature analyses. Its value is in handling the
+coordinate conversion correctly and in keeping the structural and regulatory
+questions separate — two things that are easy to get wrong and whose failures are
+silent.
+
+The most common misinterpretation is reading `isoform_status` as a statement
+about conditions. If you take one thing from this vignette, take that: the
+structural column describes which transcript carries a site, and the regulatory
+column describes which condition detected it. They are both useful, and they are
+not the same.
+
+Suggestions and bug reports are welcome at
+[github.com/Tarunchikatipalli6/m6Aswitch/issues](https://github.com/Tarunchikatipalli6/m6Aswitch/issues).
+
+## Session Information {#session}
+
+```{r session_info}
+packageVersion("m6Aswitch")
+sessionInfo()
+```
+
+[Back to Table of Contents](#table-of-contents)

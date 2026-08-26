@@ -1,96 +1,100 @@
-#' Classify the Mechanism Behind LOST m6A Sites
+#' Classify the Mechanism Behind Isoform-Specific m6A Sites
 #'
 #' @md
 #'
-#' For every LOST call in an annotated m6A switches table, determines whether the
-#' site was lost because:
-#' \itemize{
-#'   \item \strong{LOST_EXON_SKIPPED} — the genomic region containing the m6A site
-#'     does not exist in isoform B (the exon is absent from that isoform's exon
-#'     structure).
-#'   \item \strong{LOST_UNMETHYLATED} — the exon is present in isoform B but
-#'     m6Anet did not detect m6A there (the sequence exists but the methylation
-#'     machinery chose not to deposit m6A at that site).
-#' }
-#' GAINED sites receive an analogous classification (\code{GAINED_EXON_INCLUDED}
-#' vs \code{GAINED_NEW_METHYLATION}). RETAINED sites are left unchanged.
+#' For every site that appears on only one isoform of a switch pair, determines
+#' whether the difference is structural (the sequence is absent from the other
+#' isoform) or regulatory (the sequence is present but unmethylated).
 #'
-#' @param m6a_switches data.table from \code{annotate_m6a_switches_genomic()} (or
-#'   any table that contains columns \code{seqname}, \code{start}, \code{end},
-#'   \code{isoform_b} (for LOST) / \code{isoform_a} (for GAINED), and
-#'   \code{m6a_fate}).
-#' @param gtf_file Path to the same GTF/GFF file used in
+#' \itemize{
+#'   \item \strong{A_ONLY_EXON_SKIPPED} — the genomic position does not exist in
+#'     isoform B; the exon is absent from that isoform's structure. Structural.
+#'   \item \strong{A_ONLY_UNMETHYLATED} — the position exists in isoform B but
+#'     m6Anet detected no modification there. Regulatory.
+#'   \item \strong{B_ONLY_EXON_INCLUDED} — the position does not exist in
+#'     isoform A; isoform B includes an exon that carries the site. Structural.
+#'   \item \strong{B_ONLY_NEW_METHYLATION} — the position exists in isoform A but
+#'     is methylated only in isoform B. Regulatory.
+#' }
+#'
+#' Sites present on both isoforms (\code{IN_BOTH_ISOFORMS}) are left as NA.
+#'
+#' @param m6a_switches data.table from \code{annotate_m6a_switches_genomic()}.
+#'   Must contain \code{seqname}, \code{start}, \code{end}, \code{isoform_a},
+#'   \code{isoform_b}, and \code{isoform_status}.
+#' @param gtf_file Path to the same GTF/GFF used in
 #'   \code{lift_m6a_to_genomic()}.
 #'
-#' @return \code{m6a_switches} with two new columns added in-place:
+#' @return A copy of \code{m6a_switches} with two new columns:
 #'   \describe{
-#'     \item{lost_mechanism}{Character. One of \code{LOST_EXON_SKIPPED},
-#'       \code{LOST_UNMETHYLATED}, \code{GAINED_EXON_INCLUDED},
-#'       \code{GAINED_NEW_METHYLATION}, or \code{NA} for RETAINED sites.}
-#'     \item{isoform_b_has_exon}{Logical. \code{TRUE} if the genomic coordinate of
-#'       the m6A site overlaps at least one exon of the isoform that \emph{lacks}
-#'       the m6A signal. \code{NA} for RETAINED sites.}
+#'     \item{isoform_mechanism}{Character. One of \code{A_ONLY_EXON_SKIPPED},
+#'       \code{A_ONLY_UNMETHYLATED}, \code{B_ONLY_EXON_INCLUDED},
+#'       \code{B_ONLY_NEW_METHYLATION}, or \code{NA} for sites present on both
+#'       isoforms.}
+#'     \item{target_isoform_has_exon}{Logical. \code{TRUE} if the genomic
+#'       coordinate overlaps an exon of the isoform that \emph{lacks} the m6A
+#'       call. Note the target differs by status: isoform B is checked for
+#'       \code{ISOFORM_A_ONLY} sites, isoform A for \code{ISOFORM_B_ONLY}.
+#'       \code{NA} for sites on both isoforms.}
 #'   }
 #'
 #' @details
 #' ## How the classification works
 #'
-#' For a \strong{LOST} site (m6A detected in isoform A, absent in isoform B):
+#' For an \strong{ISOFORM_A_ONLY} site (detected on isoform A, absent on B):
 #' \enumerate{
-#'   \item The function retrieves all exons of isoform B from the GTF.
-#'   \item It checks whether the genomic coordinate (\code{seqname}:\code{start}-
-#'     \code{end}) of the LOST site overlaps any of those exons.
-#'   \item If \strong{no overlap} → the exon containing the m6A site does not
-#'     exist in isoform B → \code{LOST_EXON_SKIPPED}.
-#'   \item If \strong{overlap} → the exon exists in isoform B but m6Anet found no
-#'     m6A there → \code{LOST_UNMETHYLATED}.
+#'   \item Retrieve all exons of isoform B from the GTF.
+#'   \item Check whether \code{seqname}:\code{start}-\code{end} overlaps any.
+#'   \item No overlap → the exon is absent from isoform B →
+#'     \code{A_ONLY_EXON_SKIPPED}.
+#'   \item Overlap → the exon is present but unmethylated →
+#'     \code{A_ONLY_UNMETHYLATED}.
 #' }
 #'
-#' For a \strong{GAINED} site (m6A absent in isoform A, detected in isoform B)
-#' the same logic is applied to isoform A:
-#' \enumerate{
-#'   \item If the region is \strong{absent} from isoform A's exons →
-#'     \code{GAINED_EXON_INCLUDED} (a new exon appears in isoform B that brings
-#'     the m6A site along).
-#'   \item If the region is \strong{present} in isoform A but unmethylated →
-#'     \code{GAINED_NEW_METHYLATION} (same exon, but methylation is deposited only
-#'     in isoform B).
-#' }
+#' For an \strong{ISOFORM_B_ONLY} site the same test is applied to isoform A,
+#' giving \code{B_ONLY_EXON_INCLUDED} or \code{B_ONLY_NEW_METHYLATION}.
 #'
 #' ## Biological interpretation
 #'
-#' | Classification | Meaning |
-#' |---|---|
-#' | LOST_EXON_SKIPPED | Structural — the exon is absent from isoform B; m6A physically cannot exist there |
-#' | LOST_UNMETHYLATED | Regulatory — same exon present, but METTL3 does not methylate the site in isoform B |
-#' | GAINED_EXON_INCLUDED | Structural — a new exon appears in isoform B that carries an m6A site |
-#' | GAINED_NEW_METHYLATION | Regulatory — the exon exists in isoform A but becomes methylated only in isoform B |
+#' | Classification | Type | Meaning |
+#' |---|---|---|
+#' | A_ONLY_EXON_SKIPPED | Structural | exon absent from isoform B; m6A cannot exist there |
+#' | A_ONLY_UNMETHYLATED | Regulatory | same exon present, not methylated on isoform B |
+#' | B_ONLY_EXON_INCLUDED | Structural | isoform B includes an exon carrying the site |
+#' | B_ONLY_NEW_METHYLATION | Regulatory | exon present on A, methylated only on B |
 #'
-#' \code{LOST_UNMETHYLATED} and \code{GAINED_NEW_METHYLATION} are the most
-#' biologically interesting because they represent genuine changes in m6A
-#' deposition that cannot be explained by alternative splicing alone.
+#' The regulatory classes cannot be explained by alternative splicing and are
+#' generally the more informative.
+#'
+#' ## Note on interpretation
+#'
+#' This function operates on \code{isoform_status}, which describes isoform
+#' membership rather than condition. "Unmethylated on isoform B" means m6Anet
+#' made no call at that position on that transcript — which may reflect genuine
+#' absence of modification, or insufficient read coverage. The function does not
+#' distinguish these.
 #'
 #' @examples
 #' \dontrun{
-#' # After the standard publication workflow:
-#' m6a_final <- annotate_drach(m6a_switches, m6a_condition_a, m6a_condition_b)
+#' res <- annotate_m6a_switches_genomic(genomic_sites, iso_switches)
+#' res <- annotate_drach(res, m6a_cond_a, m6a_cond_b)
+#' res <- classify_lost_mechanism(res, "genome.gtf")
 #'
-#' # Classify why each LOST/GAINED site changed:
-#' m6a_classified <- classify_lost_mechanism(m6a_final, "genome.gtf")
+#' # Regulatory changes (same sequence, different methylation)
+#' res[isoform_mechanism %in% c("A_ONLY_UNMETHYLATED", "B_ONLY_NEW_METHYLATION")]
 #'
-#' # Inspect regulatory changes (same exon, different methylation)
-#' m6a_classified[lost_mechanism == "LOST_UNMETHYLATED"]
-#' m6a_classified[lost_mechanism == "GAINED_NEW_METHYLATION"]
+#' # Structural changes (splicing)
+#' res[isoform_mechanism %in% c("A_ONLY_EXON_SKIPPED", "B_ONLY_EXON_INCLUDED")]
 #'
-#' # Inspect structural changes (exon gained/lost)
-#' m6a_classified[lost_mechanism == "LOST_EXON_SKIPPED"]
-#' m6a_classified[lost_mechanism == "GAINED_EXON_INCLUDED"]
+#' # Cross-tabulate against isoform status
+#' table(res$isoform_status, res$isoform_mechanism, useNA = "ifany")
 #' }
 #'
 #' @importFrom txdbmaker makeTxDbFromGFF
 #' @importFrom GenomicFeatures exonsBy
 #' @importFrom GenomicRanges GRanges findOverlaps
 #' @importFrom IRanges IRanges
+#' @importFrom S4Vectors queryHits
 #' @import data.table
 #' @import methods
 #'
@@ -102,13 +106,18 @@ classify_lost_mechanism <- function(m6a_switches, gtf_file) {
     stop("m6a_switches must be a data.table from annotate_m6a_switches_genomic()")
   }
 
-  required_cols <- c("seqname", "start", "end", "isoform_a", "isoform_b", "isoform_status")
+  required_cols <- c("seqname", "start", "end", "isoform_a", "isoform_b",
+                     "isoform_status")
   missing_cols  <- setdiff(required_cols, names(m6a_switches))
   if (length(missing_cols) > 0) {
     stop(
       "m6a_switches is missing required columns: ",
       paste(missing_cols, collapse = ", "),
-      "\nThis function requires output from annotate_m6a_switches_genomic()."
+      "\nThis function requires output from annotate_m6a_switches_genomic().",
+      if ("m6a_fate" %in% names(m6a_switches) &&
+          !"isoform_status" %in% names(m6a_switches))
+        "\nFound 'm6a_fate' but not 'isoform_status' - regenerate with the current version."
+      else ""
     )
   }
 
@@ -116,27 +125,34 @@ classify_lost_mechanism <- function(m6a_switches, gtf_file) {
     stop("GTF file not found: ", gtf_file)
   }
 
+  # Work on a copy so the caller's table is not modified by reference
+  m6a_switches <- data.table::copy(m6a_switches)
+
   if (nrow(m6a_switches) == 0) {
-    m6a_switches[, isoform_mechanism        := character(0)]
-    m6a_switches[, target_isoform_has_exon  := logical(0)]
+    m6a_switches[, isoform_mechanism       := character(0)]
+    m6a_switches[, target_isoform_has_exon := logical(0)]
     return(m6a_switches)
   }
 
-  # ── Build exon database ──────────────────────────────────────────────────────
+  # ── Build exon database ─────────────────────────────────────────────────────
   message("Building transcript exon database from GTF...")
   txdb      <- txdbmaker::makeTxDbFromGFF(gtf_file)
   all_exons <- GenomicFeatures::exonsBy(txdb, by = "tx", use.names = TRUE)
   message("Exon database ready.")
 
-  # ── Initialise output columns ────────────────────────────────────────────────
+  # ── Initialise output columns ───────────────────────────────────────────────
   m6a_switches[, isoform_mechanism       := NA_character_]
   m6a_switches[, target_isoform_has_exon := NA]
 
-  # ── Vectorised classification by unique site/transcript target ───────────────
+  # ── Classify sites present on only one isoform ──────────────────────────────
   classify_idx <- which(m6a_switches$isoform_status %in%
                         c("ISOFORM_A_ONLY", "ISOFORM_B_ONLY"))
 
   if (length(classify_idx) > 0) {
+
+    # NOTE: row_id is assigned AFTER subsetting. Inside DT[i, j], `.I` returns
+    # positions within the subset, not the parent table - using it here would
+    # write results to the wrong rows.
     classify_dt <- m6a_switches[classify_idx, .(
       seqname,
       start,
@@ -147,17 +163,18 @@ classify_lost_mechanism <- function(m6a_switches, gtf_file) {
     )]
     classify_dt[, row_id := classify_idx]
 
-    unique_targets <- unique(classify_dt$target_isoform)
+    unique_targets  <- unique(classify_dt$target_isoform)
     isoform_missing <- setdiff(unique_targets, names(all_exons))
+    present_targets <- intersect(unique_targets, names(all_exons))
 
     classify_dt[, has_exon := NA]
-    present_targets <- intersect(unique_targets, names(all_exons))
 
     for (iso in present_targets) {
       idx <- which(classify_dt$target_isoform == iso)
       site_gr <- GenomicRanges::GRanges(
         seqnames = classify_dt$seqname[idx],
-        ranges = IRanges::IRanges(start = classify_dt$start[idx], end = classify_dt$end[idx])
+        ranges   = IRanges::IRanges(start = classify_dt$start[idx],
+                                    end   = classify_dt$end[idx])
       )
       hits <- GenomicRanges::findOverlaps(site_gr, all_exons[[iso]], type = "any")
       has_exon <- rep(FALSE, length(idx))
@@ -168,38 +185,43 @@ classify_lost_mechanism <- function(m6a_switches, gtf_file) {
     }
 
     if (length(isoform_missing) > 0) {
-      warning(
-        sprintf(
-          "Could not find %d target isoform(s) in GTF while classifying mechanisms.",
-          length(isoform_missing)
-        )
-      )
+      warning(sprintf(
+        "Could not find %d target isoform(s) in GTF while classifying mechanisms (%s).",
+        length(isoform_missing),
+        paste(utils::head(isoform_missing, 5), collapse = ", ")
+      ), call. = FALSE)
     }
 
     m6a_switches[classify_dt$row_id, target_isoform_has_exon := classify_dt$has_exon]
 
-    sel_a <- classify_dt$isoform_status == "ISOFORM_A_ONLY" & !is.na(classify_dt$has_exon)
-    m6a_switches[
-      classify_dt$row_id[sel_a],
-      isoform_mechanism := ifelse(
-        classify_dt$has_exon[sel_a],
-        "A_ONLY_UNMETHYLATED",
-        "A_ONLY_EXON_SKIPPED"
-      )
-    ]
+    sel_a <- classify_dt$isoform_status == "ISOFORM_A_ONLY" &
+             !is.na(classify_dt$has_exon)
+    if (any(sel_a)) {
+      m6a_switches[
+        classify_dt$row_id[sel_a],
+        isoform_mechanism := ifelse(
+          classify_dt$has_exon[sel_a],
+          "A_ONLY_UNMETHYLATED",
+          "A_ONLY_EXON_SKIPPED"
+        )
+      ]
+    }
 
-    sel_b <- classify_dt$isoform_status == "ISOFORM_B_ONLY" & !is.na(classify_dt$has_exon)
-    m6a_switches[
-      classify_dt$row_id[sel_b],
-      isoform_mechanism := ifelse(
-        classify_dt$has_exon[sel_b],
-        "B_ONLY_NEW_METHYLATION",
-        "B_ONLY_EXON_INCLUDED"
-      )
-    ]
+    sel_b <- classify_dt$isoform_status == "ISOFORM_B_ONLY" &
+             !is.na(classify_dt$has_exon)
+    if (any(sel_b)) {
+      m6a_switches[
+        classify_dt$row_id[sel_b],
+        isoform_mechanism := ifelse(
+          classify_dt$has_exon[sel_b],
+          "B_ONLY_NEW_METHYLATION",
+          "B_ONLY_EXON_INCLUDED"
+        )
+      ]
+    }
   }
 
-  # ── Summary message ─────────────────────────────────────────────────────────
+  # ── Summary ─────────────────────────────────────────────────────────────────
   n_a_skip  <- sum(m6a_switches$isoform_mechanism == "A_ONLY_EXON_SKIPPED",    na.rm = TRUE)
   n_a_unmet <- sum(m6a_switches$isoform_mechanism == "A_ONLY_UNMETHYLATED",    na.rm = TRUE)
   n_b_incl  <- sum(m6a_switches$isoform_mechanism == "B_ONLY_EXON_INCLUDED",   na.rm = TRUE)
@@ -216,5 +238,5 @@ classify_lost_mechanism <- function(m6a_switches, gtf_file) {
     n_a_skip, n_b_incl, n_a_unmet, n_b_new
   ))
 
-  return(m6a_switches)
+  m6a_switches
 }

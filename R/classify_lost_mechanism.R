@@ -1,7 +1,5 @@
 #' Classify the Mechanism Behind Isoform-Specific m6A Sites
 #'
-#' @md
-#'
 #' For every site that appears on only one isoform of a switch pair, determines
 #' whether the difference is structural (the sequence is absent from the other
 #' isoform) or regulatory (the sequence is present but unmethylated).
@@ -90,6 +88,7 @@
 #' table(res$isoform_status, res$isoform_mechanism, useNA = "ifany")
 #' }
 #'
+#' @md
 #' @importFrom txdbmaker makeTxDbFromGFF
 #' @importFrom GenomicFeatures exonsBy
 #' @importFrom GenomicRanges GRanges findOverlaps

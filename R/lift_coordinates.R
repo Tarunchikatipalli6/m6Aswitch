@@ -166,7 +166,7 @@ lift_m6a_to_genomic <- function(m6a_sites, gtf_file) {
       )
     }
 
-    genomic_ranges$transcript_id       <- mapped_sites$transcript_id
+    genomic_ranges$transcript_id       <- tx_id
     genomic_ranges$transcript_position <- as.integer(mapped_sites$position)
     genomic_ranges$probability         <- mapped_sites$probability
 

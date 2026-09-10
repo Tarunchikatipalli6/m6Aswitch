@@ -44,15 +44,8 @@ export_annotated_switches <- function(m6a_switches,
 
   output_files <- list()
 
-  if (format %in% c("csv", "both")) {
-    csv_file <- sprintf("%s.csv", output_prefix)
-    data.table::fwrite(m6a_switches, file = csv_file)
-    output_files$csv <- csv_file
-    message("Wrote CSV: ", csv_file)
-  }
-
+  # Validate before writing anything - a failed call should leave no files
   if (format %in% c("bed", "both")) {
-
     if (!color_by %in% names(m6a_switches)) {
       stop("Column '", color_by, "' not found. Cannot write BED. Available: ",
            paste(names(m6a_switches), collapse = ", "))
@@ -63,6 +56,16 @@ export_annotated_switches <- function(m6a_switches,
              "Condition information was not supplied upstream; use color_by = 'isoform_status'."
            else "")
     }
+  }
+
+  if (format %in% c("csv", "both")) {
+    csv_file <- sprintf("%s.csv", output_prefix)
+    data.table::fwrite(m6a_switches, file = csv_file)
+    output_files$csv <- csv_file
+    message("Wrote CSV: ", csv_file)
+  }
+
+  if (format %in% c("bed", "both")) {
 
     bed_file <- sprintf("%s.bed", output_prefix)
 

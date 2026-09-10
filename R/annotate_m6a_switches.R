@@ -60,6 +60,21 @@ annotate_drach <- function(m6a_switches, m6a_condition_a, m6a_condition_b) {
     return(m6a_switches)
   }
 
+  # Determine which column indicates isoform membership
+  if ("isoform_status" %in% names(m6a_switches)) {
+    status_col <- "isoform_status"
+    b_only     <- "ISOFORM_B_ONLY"
+  } else if ("m6a_fate" %in% names(m6a_switches)) {
+    warning("No 'isoform_status' column found; falling back to 'm6a_fate'. ",
+            "This is deprecated - regenerate with the current ",
+            "annotate_m6a_switches_genomic().", call. = FALSE)
+    status_col <- "m6a_fate"
+    b_only     <- "GAINED"
+  } else {
+    stop("m6a_switches must contain 'isoform_status' ",
+         "(from annotate_m6a_switches_genomic())")
+  }
+
   # Check kmer column exists
   if (!"kmer" %in% names(m6a_condition_a) ||
       !"kmer" %in% names(m6a_condition_b)) {
@@ -82,10 +97,10 @@ annotate_drach <- function(m6a_switches, m6a_condition_a, m6a_condition_b) {
     "position"
   }
 
-  # For LOST and RETAINED — kmer comes from isoform_a (where m6A was detected)
-  # For GAINED — kmer comes from isoform_b (where m6A was detected)
+  # Kmer comes from whichever isoform actually carries the site
+
   m6a_switches[, lookup_transcript := data.table::fifelse(
-    m6a_fate == "GAINED", isoform_b, isoform_a
+    get(status_col) == b_only, isoform_b, isoform_a
   )]
   m6a_switches[, .row_id := .I]
 

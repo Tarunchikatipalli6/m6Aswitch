@@ -171,7 +171,7 @@ lift_m6a_to_genomic <- function(m6a_sites, gtf_file) {
     genomic_ranges$probability         <- mapped_sites$probability
 
     for (col in other_cols) {
-      genomic_ranges[[col]] <- mapped_sites[[col]]
+      S4Vectors::mcols(genomic_ranges)[[col]] <- mapped_sites[[col]]
     }
 
     result_list[[length(result_list) + 1L]] <- genomic_ranges

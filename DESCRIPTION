@@ -14,7 +14,7 @@ Description: m6Aswitch integrates isoform-level switching analysis with m6A
 License: MIT + file LICENSE
 Encoding: UTF-8
 Roxygen2: list(markdown = TRUE)
-RoxygenNote: 7.2.3
+RoxygenNote: 7.3.3
 Imports:
     data.table,
     tidyr,

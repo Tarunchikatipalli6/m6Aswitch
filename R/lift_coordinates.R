@@ -240,8 +240,11 @@ lift_m6a_to_genomic <- function(m6a_sites, gtf_file) {
 #'       \code{LOST} (condition_1 only), \code{GAINED} (condition_2 only),
 #'       \code{RETAINED} (both). NA unless a \code{condition} column was
 #'       supplied to \code{lift_m6a_to_genomic()}.}
+#'     \item{m6a_fate_label}{Plain-language form of \code{m6a_fate}, naming the
+#'       conditions directly - e.g. \code{"IDH_R132H_only"}, \code{"IDH_WT_only"},
+#'       \code{"both"}. Easier to read than LOST/GAINED, which depend on which
+#'       condition was designated condition_1.}
 #'     \item{probability_a, probability_b}{m6A probability on each isoform}
-#'     \item{probability_c1, probability_c2}{m6A probability in each condition}
 #'   }
 #'   Plus: gene_id, isoform_a, isoform_b, condition_1, condition_2,
 #'   genomic_position, seqname, start, end, transcript_position, strand,

@@ -440,6 +440,19 @@ annotate_m6a_switches_genomic <- function(m6a_sites_gr, iso_switches) {
           NA_character_
         }
       }
+      
+      # Plain-language version of cond_status, naming the conditions directly.
+      # LOST/GAINED are directional and depend on which condition is first,
+      # which is easy to misread. This states it explicitly.
+      fate_label <- if (is.na(cond_status)) {
+        NA_character_
+      } else if (cond_status == "RETAINED") {
+        "both"
+      } else if (cond_status == "LOST") {
+        paste0(condition_1, "_only")
+      } else {
+        paste0(condition_2, "_only")
+      }
 
       result_list[[length(result_list) + 1]] <- data.table::data.table(
         gene_id             = gene,

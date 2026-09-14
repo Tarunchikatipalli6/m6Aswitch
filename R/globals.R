@@ -28,6 +28,7 @@ utils::globalVariables(c(
   "m6a_in_isoform_a",
   "m6a_in_isoform_b",
   "m6a_fate",
+  "m6a_fate_label",
   "N",
   "pct",
   "position",

@@ -476,6 +476,7 @@ annotate_m6a_switches_genomic <- function(m6a_sites_gr, iso_switches) {
 
         # regulatory
         m6a_fate            = cond_status,
+        m6a_fate_label      = fate_label,
         probability_c1      = prob_c1,
         probability_c2      = prob_c2,
 

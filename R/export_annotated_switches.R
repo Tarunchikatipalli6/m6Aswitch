@@ -227,12 +227,18 @@ generate_summary_report <- function(m6a_switches,
         sprintf("  GAINED   = detected in %s only", cond2),
         "  RETAINED = detected in both",
         "")
-      tab <- m6a_switches[!is.na(m6a_fate), .N, by = m6a_fate][order(-N)]
+      has_lab <- "m6a_fate_label" %in% names(m6a_switches)
+      tab <- if (has_lab) {
+        m6a_switches[!is.na(m6a_fate), .N, by = .(m6a_fate, m6a_fate_label)][order(-N)]
+      } else {
+        m6a_switches[!is.na(m6a_fate), .N, by = m6a_fate][order(-N)]
+      }
       n_c <- sum(tab$N)
       for (i in seq_len(nrow(tab))) {
-        report <- c(report, sprintf("  %-20s : %6d (%5.1f%%)",
-                                    tab$m6a_fate[i], tab$N[i],
-                                    100 * tab$N[i] / n_c))
+        nm <- if (has_lab) sprintf("%-10s (%s)", tab$m6a_fate[i], tab$m6a_fate_label[i])
+              else tab$m6a_fate[i]
+        report <- c(report, sprintf("  %-28s : %6d (%5.1f%%)",
+                                    nm, tab$N[i], 100 * tab$N[i] / n_c))
       }
       report <- c(report, "")
     }

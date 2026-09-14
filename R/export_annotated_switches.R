@@ -112,12 +112,20 @@ export_annotated_switches <- function(m6a_switches,
     class_vals <- as.character(m6a_switches[[color_by]])
     item_rgb   <- unname(rgb_map[class_vals])
     item_rgb[is.na(item_rgb)] <- "128,128,128"    # unknown or NA
+    
+    # Colour keys off the standard term; the visible name uses the readable
+    # label when one is available, so IGV shows the condition names.
+    name_vals <- class_vals
+    if (color_by == "m6a_fate" && "m6a_fate_label" %in% names(m6a_switches)) {
+      lab <- as.character(m6a_switches$m6a_fate_label)
+      name_vals[!is.na(lab)] <- lab[!is.na(lab)]
+    }
 
     bed_data <- data.table::data.table(
       chrom      = chrom_col,
       chromStart = as.integer(start_col),
       chromEnd   = as.integer(end_col),
-      name       = ifelse(is.na(class_vals), "UNCLASSIFIED", class_vals),
+      name       = ifelse(is.na(name_vals), "UNCLASSIFIED", name_vals),
       score      = as.integer(score_col),
       strand     = strand_col,
       thickStart = as.integer(start_col),

@@ -332,8 +332,8 @@ plot_m6aswitch_results <- function(classified,
       next
     }
 
-    cond_a_lab <- if (!is.na(gene_dt$condition_1[1])) gene_dt$condition_1[1] else "condition 1"
-    cond_b_lab <- if (!is.na(gene_dt$condition_2[1])) gene_dt$condition_2[1] else "condition 2"
+    cond_a_lab <- if ("condition_1" %in% names(gene_dt) && !is.na(gene_dt$condition_1[1])) gene_dt$condition_1[1] else "condition 1"
+    cond_b_lab <- if ("condition_2" %in% names(gene_dt) && !is.na(gene_dt$condition_2[1])) gene_dt$condition_2[1] else "condition 2"
 
     dt_a <- gene_dt[, .(
       isoform      = isoform_a,
@@ -359,7 +359,7 @@ plot_m6aswitch_results <- function(classified,
     }
 
     subtitle_text <- sprintf("%s \u2192 %s", cond_a_lab, cond_b_lab)
-    if (!is.na(gene_dt$dif[1]) && !is.na(gene_dt$fdr[1])) {
+    if (all(c("dif","fdr") %in% names(gene_dt)) && !is.na(gene_dt$dif[1]) && !is.na(gene_dt$fdr[1])) {
       subtitle_text <- sprintf("dIF = %.2f | FDR = %.2e | %s \u2192 %s",
                                gene_dt$dif[1], gene_dt$fdr[1],
                                cond_a_lab, cond_b_lab)
@@ -514,18 +514,33 @@ plot_m6a_switches <- function(m6a_switches,
   if (plot_type == "delta_prob") {
     dt[, delta_prob := data.table::fcoalesce(probability_b, 0) -
                        data.table::fcoalesce(probability_a, 0)]
+    pdt <- dt[!is.na(delta_prob)]
+
+    # geom_violin silently drops groups with fewer than two points, which
+    # would return an empty plot on small inputs. Fall back to points.
+    small <- nrow(pdt) == 0 || min(pdt[, .N, by = .plot_class]$N) < 2
+
+    p <- ggplot2::ggplot(pdt, ggplot2::aes(x = .plot_class, y = delta_prob,
+                                           fill = .plot_class))
+
+    if (small) {
+      p <- p + ggplot2::geom_point(ggplot2::aes(colour = .plot_class),
+                                   size = 2.5, show.legend = FALSE) +
+        ggplot2::scale_colour_manual(values = cols, drop = FALSE)
+    } else {
+      p <- p + ggplot2::geom_violin(alpha = 0.6, trim = TRUE, colour = NA) +
+        ggplot2::geom_boxplot(width = 0.15, outlier.size = 0.8, alpha = 0.9)
+    }
 
     return(
-      ggplot2::ggplot(dt[!is.na(delta_prob)],
-                      ggplot2::aes(x = .plot_class, y = delta_prob,
-                                   fill = .plot_class)) +
-        ggplot2::geom_violin(alpha = 0.6, trim = TRUE, color = NA) +
-        ggplot2::geom_boxplot(width = 0.15, outlier.size = 0.8, alpha = 0.9) +
+      p +
         ggplot2::geom_hline(yintercept = 0, linetype = "dashed", linewidth = 0.4) +
         ggplot2::scale_fill_manual(values = cols, drop = FALSE) +
         ggplot2::labs(
           title    = "Change in m6A Probability Between Isoforms",
-          subtitle = "Undetected sites treated as probability 0",
+          subtitle = if (small)
+            "Undetected sites treated as probability 0 (too few points for a violin)"
+            else "Undetected sites treated as probability 0",
           x = lab,
           y = expression(Delta * " probability (isoform B - isoform A)"),
           fill = lab) +
@@ -594,8 +609,8 @@ plot_isoform_details <- function(gene,
     "position"
   }
 
-  cond_a_lab <- if (!is.na(gene_data$condition_1[1])) gene_data$condition_1[1] else "condition 1"
-  cond_b_lab <- if (!is.na(gene_data$condition_2[1])) gene_data$condition_2[1] else "condition 2"
+  cond_a_lab <- if ("condition_1" %in% names(gene_data) && !is.na(gene_data$condition_1[1])) gene_data$condition_1[1] else "condition 1"
+  cond_b_lab <- if ("condition_2" %in% names(gene_data) && !is.na(gene_data$condition_2[1])) gene_data$condition_2[1] else "condition 2"
 
   dt_a <- gene_data[, .(isoform = isoform_a, position = get(x_col),
                         .plot_class, present = m6a_in_isoform_a,
@@ -626,7 +641,7 @@ plot_isoform_details <- function(gene,
   }
 
   subtitle_text <- sprintf("%s \u2192 %s", cond_a_lab, cond_b_lab)
-  if (!is.na(gene_data$dif[1]) && !is.na(gene_data$fdr[1])) {
+  if (all(c("dif","fdr") %in% names(gene_data)) && !is.na(gene_data$dif[1]) && !is.na(gene_data$fdr[1])) {
     subtitle_text <- sprintf("dIF = %.2f | FDR = %.2e | %s \u2192 %s",
                              gene_data$dif[1], gene_data$fdr[1],
                              cond_a_lab, cond_b_lab)

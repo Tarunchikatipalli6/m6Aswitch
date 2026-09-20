@@ -33,7 +33,7 @@ test_that("parse_m6anet reports missing required columns before filtering", {
 
   expect_error(
     parse_m6anet(temp_file),
-    "must contain columns"
+    "missing columns"
   )
 
   unlink(temp_file)

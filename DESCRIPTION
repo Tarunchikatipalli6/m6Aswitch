@@ -17,16 +17,11 @@ Roxygen2: list(markdown = TRUE)
 RoxygenNote: 7.3.3
 Imports:
     data.table,
-    tidyr,
     GenomicRanges,
     GenomicFeatures,
     txdbmaker,
     IRanges,
-    igraph,
     ggplot2,
-    stringr,
-    readr,
-    Biostrings,
     S4Vectors,
     methods
 Suggests:

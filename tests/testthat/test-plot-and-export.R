@@ -6,6 +6,7 @@ test_that("delta probability plot keeps LOST/GAINED with not-detected treated as
   dt <- data.table(
     gene_id = c("G1", "G1", "G1"),
     m6a_fate = c("LOST", "GAINED", "RETAINED"),
+    isoform_status = c("ISOFORM_A_ONLY", "ISOFORM_B_ONLY", "IN_BOTH_ISOFORMS"),
     probability_a = c(0.9, NA_real_, 0.4),
     probability_b = c(NA_real_, 0.8, 0.5)
   )
@@ -23,6 +24,7 @@ test_that("plot_isoform_details filters to requested gene_id", {
     isoform_b = c("B1", "B2"),
     start = c(100L, 200L),
     m6a_fate = c("LOST", "GAINED"),
+    isoform_status = c("ISOFORM_A_ONLY", "ISOFORM_B_ONLY"),
     m6a_in_isoform_a = c(TRUE, FALSE),
     m6a_in_isoform_b = c(FALSE, TRUE),
     probability_a = c(0.9, NA_real_),
@@ -42,6 +44,7 @@ test_that("export_annotated_switches writes BED9 with optional track line", {
     end = 101L,
     strand = "+",
     m6a_fate = "LOST",
+    isoform_status = "ISOFORM_A_ONLY",
     probability_a = 0.9,
     probability_b = NA_real_
   )

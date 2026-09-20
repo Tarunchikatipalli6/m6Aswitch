@@ -1,89 +1,63 @@
-library(testthat)
-library(data.table)
+test_that("complete workflow: annotate with conditions", {
+  gr <- GenomicRanges::GRanges(
+    seqnames = rep("chr1", 4),
+    ranges = IRanges::IRanges(start = c(100L, 200L, 300L, 400L),
+                              end   = c(100L, 200L, 300L, 400L)),
+    strand = rep("+", 4))
+  gr$transcript_id       <- c("ISO_A", "ISO_A", "ISO_B", "ISO_B")
+  gr$transcript_position <- c(10L, 20L, 30L, 40L)
+  gr$probability         <- c(0.95, 0.88, 0.92, 0.85)
+  gr$condition           <- c("WT", "MUT", "WT", "MUT")
 
-# Integration tests for the complete m6Aswitch workflow
+  switches <- data.table::data.table(
+    gene_id = "GENE1", isoform_a = "ISO_A", isoform_b = "ISO_B",
+    fdr = 0.001, condition_1 = "WT", condition_2 = "MUT", dif = 0.3)
 
-test_that("complete workflow: m6a_sites -> annotate_m6a_switches -> annotate_drach", {
-  # Step 1: Create sample m6A sites
-  m6a_sites <- data.table(
-    transcript_id = c("ENST001", "ENST001", "ENST002", "ENST002"),
-    position = c(100, 150, 100, 200),
-    probability = c(0.95, 0.88, 0.92, 0.85)
-  )
-  
-  # Step 2: Create isoform switches
-  iso_switches <- data.table(
-    gene_id = c("ENSG001", "ENSG002"),
-    isoform_a = c("ENST001", "ENST002"),
-    isoform_b = c("ENST002", "ENST003"),
-    fdr = c(0.001, 0.01)
-  )
-  
-  # Step 3: Create sequences
-  iso_sequences <- data.table(
-    isoform_id = c("ENST001", "ENST002", "ENST003"),
-    sequence = c(
-      "ACGAACATCGGAACACCGGGAACAAACGAAC",
-      "ACGAAGATCGGAACACCGGGAACAAACGAAC",
-      "CGAACATCGGAACACCGGGAACAAACGAAC"
-    )
-  )
-  
-  # Run annotation
-  m6a_switches <- annotate_m6a_switches(m6a_sites, iso_switches, iso_sequences)
-  
-  expect_true(is.data.table(m6a_switches))
-  expect_true(nrow(m6a_switches) > 0)
-  expect_true(all(c("m6a_fate", "probability_a", "probability_b") %in% names(m6a_switches)))
+  res <- annotate_m6a_switches_genomic(gr, switches)
+
+  expect_true(data.table::is.data.table(res))
+  expect_true(nrow(res) > 0)
+  expect_true(all(c("isoform_status", "m6a_fate", "m6a_fate_label",
+                    "probability_a", "probability_b") %in% names(res)))
+  expect_true(all(res$isoform_status %in%
+    c("ISOFORM_A_ONLY", "ISOFORM_B_ONLY", "IN_BOTH_ISOFORMS")))
 })
 
 test_that("annotation handles multiple genes", {
-  m6a_sites <- data.table(
-    transcript_id = c("ISO_G1_A", "ISO_G1_B", "ISO_G2_A", "ISO_G2_B"),
-    position = c(100, 150, 200, 250),
-    probability = c(0.95, 0.88, 0.92, 0.85)
-  )
-  
-  iso_switches <- data.table(
-    gene_id = c("GENE1", "GENE1", "GENE2", "GENE2"),
-    isoform_a = c("ISO_G1_A", "ISO_G1_B", "ISO_G2_A", "ISO_G2_B"),
-    isoform_b = c("ISO_G1_B", "ISO_G1_A", "ISO_G2_B", "ISO_G2_A"),
-    fdr = c(0.001, 0.005, 0.01, 0.02)
-  )
-  
-  iso_sequences <- data.table(
-    isoform_id = c("ISO_G1_A", "ISO_G1_B", "ISO_G2_A", "ISO_G2_B"),
-    sequence = rep("ACGAACATCGGAACACCGGGAACAAACGAAC", 4)
-  )
-  
-  result <- annotate_m6a_switches(m6a_sites, iso_switches, iso_sequences)
-  
-  # Check that both genes are represented
-  genes_in_result <- unique(result$gene_id)
-  expect_true(length(genes_in_result) > 0)
+  gr <- GenomicRanges::GRanges(
+    seqnames = rep("chr1", 4),
+    ranges = IRanges::IRanges(start = c(100L, 200L, 500L, 600L),
+                              end   = c(100L, 200L, 500L, 600L)),
+    strand = rep("+", 4))
+  gr$transcript_id       <- c("G1_A", "G1_B", "G2_A", "G2_B")
+  gr$transcript_position <- c(10L, 20L, 30L, 40L)
+  gr$probability         <- c(0.95, 0.88, 0.92, 0.85)
+
+  switches <- data.table::data.table(
+    gene_id     = c("GENE1", "GENE2"),
+    isoform_a   = c("G1_A", "G2_A"),
+    isoform_b   = c("G1_B", "G2_B"),
+    fdr         = c(0.001, 0.01),
+    condition_1 = "WT", condition_2 = "MUT", dif = c(0.3, 0.4))
+
+  res <- suppressWarnings(annotate_m6a_switches_genomic(gr, switches))
+  expect_setequal(unique(res$gene_id), c("GENE1", "GENE2"))
 })
 
-test_that("results are properly sorted by FDR and m6a_fate", {
-  m6a_sites <- data.table(
-    transcript_id = c("ISO1", "ISO2", "ISO1", "ISO2"),
-    position = c(100, 200, 300, 300),
-    probability = c(0.95, 0.92, 0.88, 0.90)
-  )
-  
-  iso_switches <- data.table(
-    gene_id = "GENE1",
-    isoform_a = "ISO1",
-    isoform_b = "ISO2",
-    fdr = 0.01
-  )
-  
-  iso_sequences <- data.table(
-    isoform_id = c("ISO1", "ISO2"),
-    sequence = c("ACGTACGTACGT", "ACGTACGTACGT")
-  )
-  
-  result <- annotate_m6a_switches(m6a_sites, iso_switches, iso_sequences)
-  
-  # Check if sorted (gene_id first, then fdr, then m6a_fate)
-  expect_equal(result$gene_id[1], result$gene_id[nrow(result)])
+test_that("results are sorted by gene_id then fdr", {
+  gr <- GenomicRanges::GRanges(
+    seqnames = rep("chr1", 2),
+    ranges = IRanges::IRanges(start = c(100L, 200L), end = c(100L, 200L)),
+    strand = rep("+", 2))
+  gr$transcript_id       <- c("ISO1", "ISO2")
+  gr$transcript_position <- c(10L, 20L)
+  gr$probability         <- c(0.95, 0.92)
+
+  switches <- data.table::data.table(
+    gene_id = "GENE1", isoform_a = "ISO1", isoform_b = "ISO2",
+    fdr = 0.01, condition_1 = "WT", condition_2 = "MUT", dif = 0.2)
+
+  res <- suppressWarnings(annotate_m6a_switches_genomic(gr, switches))
+  expect_equal(res$gene_id[1], res$gene_id[nrow(res)])
+  expect_false(is.unsorted(res$fdr))
 })

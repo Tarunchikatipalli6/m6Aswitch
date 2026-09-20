@@ -2,6 +2,7 @@
 utils::globalVariables(c(
   ".",
   ".I",
+  ".row_id",
   ".N",
   ".plot_class",
   "chrom",
@@ -29,6 +30,7 @@ utils::globalVariables(c(
   "m6a_in_isoform_b",
   "m6a_fate",
   "m6a_fate_label",
+  "n",
   "N",
   "pct",
   "position",

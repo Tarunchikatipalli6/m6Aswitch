@@ -99,13 +99,22 @@ lift_m6a_to_genomic <- function(m6a_sites, gtf_file) {
   for (tx_id in names(sites_by_tx)) {
     tx_sites <- sites_by_tx[[tx_id]]
 
-    # NOTE: single bracket. `all_exons[[tx_id]]` returns a plain GRanges with
-    # names dropped, and mapFromTranscripts() errors with
-    # "'transcripts' must have names". Single bracket keeps a length-1
-    # GRangesList with the name intact.
+    # Check membership BEFORE subsetting. Single-bracket subsetting on a
+    # GRangesList with an absent name throws "subscript contains invalid
+    # names" rather than returning NULL, so the guard has to come first.
+    if (!tx_id %in% names(all_exons)) {
+      missing_tx <- rbind(
+        missing_tx,
+        data.table::data.table(transcript_id = tx_id, n = nrow(tx_sites))
+      )
+      next
+    }
+
+    # Single bracket: `all_exons[[tx_id]]` drops names and
+    # mapFromTranscripts() then errors with "'transcripts' must have names".
     tx_range <- all_exons[tx_id]
 
-    if (is.null(tx_range) || length(tx_range) == 0) {
+    if (length(tx_range) == 0) {
       missing_tx <- rbind(
         missing_tx,
         data.table::data.table(transcript_id = tx_id, n = nrow(tx_sites))
